@@ -80,6 +80,19 @@ const PERMISSIONS = [
   { method: "DELETE", path: "/api/time-off/requests/:id", roles: [ROLES.EMP] },
   { method: "POST", path: "/api/time-off/requests/:id/approve", roles: [ROLES.HRM, ROLES.ADM] },
   { method: "POST", path: "/api/time-off/requests/:id/refuse", roles: [ROLES.HRM, ROLES.ADM] },
+  // Salary Structures (API.md §8)
+  { method: "POST", path: "/api/salary-structures", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/salary-structures", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/salary-structures/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "PATCH", path: "/api/salary-structures/:id", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/salary-structures/:id", roles: [ROLES.ADM] },
+  // Salary Rules (API.md §9)
+  { method: "POST", path: "/api/salary-rules", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/salary-rules", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/salary-rules/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "PATCH", path: "/api/salary-rules/:id", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/salary-rules/:id", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/salary-rules/preview", roles: [ROLES.HPM, ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -456,16 +469,6 @@ function hasOverlap(employeeId, startDate, endDate, excludeId) {
     },
   });
 }
-
-// GET /api/salary-structures — minimal read-only list (powers contract form picker)
-app.get("/api/salary-structures", async (_req, res) => {
-  try {
-    const structures = await prisma.salaryStructure.findMany({ orderBy: { name: "asc" } });
-    return res.json({ data: structures });
-  } catch (e) {
-    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
-  }
-});
 
 // POST /api/contracts — create (rejects on overlap)
 app.post("/api/contracts", async (req, res) => {
@@ -1082,6 +1085,261 @@ app.post("/api/time-off/requests/:id/refuse", async (req, res) => {
       include: reqInclude,
     });
     return res.json({ data: { updatedRequest, updatedAllocation: null } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Salary Structures & Rules (API.md §8–9) ----------
+
+// Ascending-sequence validation: no other rule in the same structure may share this sequence.
+async function assertUniqueSequence(excludeRuleId, salaryStructureId, sequence) {
+  const clash = await prisma.salaryRule.findFirst({
+    where: { salaryStructureId, sequence, ...(excludeRuleId ? { id: { not: excludeRuleId } } : {}) },
+  });
+  return !clash;
+}
+
+// Formula evaluator: resolves rule codes to computed amounts, then evaluates + - * / ( ) with precedence.
+// Recursive-descent mini-parser — no eval(), no arbitrary code execution.
+function evaluateFormula(formula, amounts) {
+  const clean = (formula || "").replace(/\s+/g, "");
+  const tokens = clean.match(/[A-Za-z_][A-Za-z_0-9]*|\d+(?:\.\d+)?|[+\-*/()]/g) || [];
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const next = () => tokens[pos++];
+
+  function factor() {
+    const t = next();
+    if (t === "(") {
+      const v = expr();
+      next(); // consume ')'
+      return v;
+    }
+    if (t === "-") return -factor();
+    if (!isNaN(Number(t))) return Number(t);
+    return Number(amounts[t] ?? 0); // rule code reference
+  }
+  function term() {
+    let v = factor();
+    while (peek() === "*" || peek() === "/") {
+      const op = next();
+      const r = factor();
+      v = op === "*" ? v * r : r === 0 ? 0 : v / r;
+    }
+    return v;
+  }
+  function expr() {
+    let v = term();
+    while (peek() === "+" || peek() === "-") {
+      const op = next();
+      const r = term();
+      v = op === "+" ? v + r : v - r;
+    }
+    return v;
+  }
+  const result = expr();
+  if (tokens.length && !Number.isFinite(result)) return 0;
+  return Number.isFinite(result) ? result : 0;
+}
+
+// computePayslip(): pure deterministic rule engine (TASKS.md Step 8 guardrail — reused by the Payrun engine).
+// Runs rules in ascending sequence, memoizing by code so later rules can reference earlier ones.
+function computePayslip(rules, { wage = 0 } = {}) {
+  const amounts = {};
+  const lines = [];
+  for (const rule of [...rules].sort((a, b) => a.sequence - b.sequence)) {
+    let amount = 0;
+    switch (rule.calculationType) {
+      case "FIXED":
+        amount = rule.value != null ? Number(rule.value) : Number(wage) || 0;
+        break;
+      case "PERCENTAGE":
+        amount = (amounts[rule.baseRuleCode] ?? 0) * (Number(rule.value) || 0) / 100;
+        break;
+      case "FORMULA":
+        amount = evaluateFormula(rule.formula, amounts);
+        break;
+      default:
+        amount = 0;
+    }
+    amounts[rule.code] = amount;
+    lines.push({
+      ...(rule.id && { salaryRuleId: rule.id }),
+      sequence: rule.sequence,
+      category: rule.category,
+      name: rule.name,
+      code: rule.code,
+      amount,
+    });
+  }
+  return { lines, amounts };
+}
+
+// POST /api/salary-structures — create (HPM/ADM)
+app.post("/api/salary-structures", async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Name is required" } });
+    const structure = await prisma.salaryStructure.create({ data: { name } });
+    return res.status(201).json({ data: structure });
+  } catch (e) {
+    if (e.code === "P2002") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "A structure with that name already exists" } });
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/salary-structures — list (read-only for HRM/HPU)
+app.get("/api/salary-structures", async (_req, res) => {
+  try {
+    const structures = await prisma.salaryStructure.findMany({
+      include: { _count: { select: { rules: true, contracts: true } } },
+      orderBy: { name: "asc" },
+    });
+    return res.json({ data: structures });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/salary-structures/:id — detail with rules
+app.get("/api/salary-structures/:id", async (req, res) => {
+  try {
+    const structure = await prisma.salaryStructure.findUnique({
+      where: { id: req.params.id },
+      include: { rules: { orderBy: { sequence: "asc" } } },
+    });
+    if (!structure) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Structure not found" } });
+    return res.json({ data: structure });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/salary-structures/:id — rename
+app.patch("/api/salary-structures/:id", async (req, res) => {
+  try {
+    const structure = await prisma.salaryStructure.update({ where: { id: req.params.id }, data: { name: req.body.name } });
+    return res.json({ data: structure });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/salary-structures/:id — Admin only, blocked if used by any Contract
+app.delete("/api/salary-structures/:id", async (req, res) => {
+  try {
+    const used = await prisma.contract.count({ where: { salaryStructureId: req.params.id } });
+    if (used > 0) return res.status(400).json({ data: null, error: { code: "CANNOT_DELETE", message: "Structure is used by a contract" } });
+    await prisma.salaryStructure.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/salary-rules — create (HPM/ADM), validates ascending unique sequence
+app.post("/api/salary-rules", async (req, res) => {
+  try {
+    const { salaryStructureId, name, code, category, sequence, calculationType, value, formula, baseRuleCode } = req.body;
+    if (!salaryStructureId || !name || !code || !category || !sequence || !calculationType) {
+      return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Missing required fields" } });
+    }
+    const okSeq = await assertUniqueSequence(null, salaryStructureId, Number(sequence));
+    if (!okSeq) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Sequence number already in use in this structure" } });
+    const rule = await prisma.salaryRule.create({
+      data: { salaryStructureId, name, code, category, sequence: Number(sequence), calculationType, value: value != null ? Number(value) : null, formula: formula || null, baseRuleCode: baseRuleCode || null },
+      include: { salaryStructure: true },
+    });
+    return res.status(201).json({ data: rule });
+  } catch (e) {
+    if (e.code === "P2002") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "A rule with that code already exists in this structure" } });
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/salary-rules — list, ordered by sequence (?salaryStructureId=)
+app.get("/api/salary-rules", async (req, res) => {
+  try {
+    const { salaryStructureId } = req.query;
+    const rules = await prisma.salaryRule.findMany({
+      where: { ...(salaryStructureId && { salaryStructureId }) },
+      include: { salaryStructure: { select: { id: true, name: true } } },
+      orderBy: [{ salaryStructureId: "asc" }, { sequence: "asc" }],
+    });
+    return res.json({ data: rules });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// POST /api/salary-rules/preview — dry-run the rule engine (must precede /:id in Express)
+app.post("/api/salary-rules/preview", async (req, res) => {
+  try {
+    const { salaryStructureId, employeeId, periodStart, periodEnd } = req.body;
+    const structure = await prisma.salaryStructure.findUnique({
+      where: { id: salaryStructureId },
+      include: { rules: { orderBy: { sequence: "asc" } } },
+    });
+    if (!structure) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Structure not found" } });
+    const contract = await getActiveContract(employeeId, periodStart ? new Date(periodStart) : new Date());
+    if (!contract) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Employee has no active contract" } });
+    const { lines, amounts } = computePayslip(structure.rules, { wage: Number(contract.wage) });
+    const gross = lines.filter((l) => l.category === "ALLOWANCE" || l.category === "BASIC").reduce((s, l) => s + l.amount, 0);
+    const deductions = lines.filter((l) => l.category === "DEDUCTION").reduce((s, l) => s + l.amount, 0);
+    return res.json({ data: { structure: { id: structure.id, name: structure.name }, employee: { id: contract.employeeId }, contract: { id: contract.id, wage: Number(contract.wage) }, lines, gross, deductions, totals: amounts } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/salary-rules/:id — detail
+app.get("/api/salary-rules/:id", async (req, res) => {
+  try {
+    const rule = await prisma.salaryRule.findUnique({ where: { id: req.params.id }, include: { salaryStructure: { select: { id: true, name: true } } } });
+    if (!rule) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Rule not found" } });
+    return res.json({ data: rule });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/salary-rules/:id — update (re-validates sequence ordering)
+app.patch("/api/salary-rules/:id", async (req, res) => {
+  try {
+    const { name, code, category, sequence, calculationType, value, formula, baseRuleCode } = req.body;
+    const existing = await prisma.salaryRule.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Rule not found" } });
+    if (sequence !== undefined) {
+      const okSeq = await assertUniqueSequence(req.params.id, existing.salaryStructureId, Number(sequence));
+      if (!okSeq) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Sequence number already in use in this structure" } });
+    }
+    const rule = await prisma.salaryRule.update({
+      where: { id: req.params.id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(code !== undefined && { code }),
+        ...(category !== undefined && { category }),
+        ...(sequence !== undefined && { sequence: Number(sequence) }),
+        ...(calculationType !== undefined && { calculationType }),
+        ...(value !== undefined && { value: value != null ? Number(value) : null }),
+        ...(formula !== undefined && { formula: formula || null }),
+        ...(baseRuleCode !== undefined && { baseRuleCode: baseRuleCode || null }),
+      },
+      include: { salaryStructure: { select: { id: true, name: true } } },
+    });
+    return res.json({ data: rule });
+  } catch (e) {
+    if (e.code === "P2002") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "A rule with that code already exists in this structure" } });
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/salary-rules/:id — HPM/ADM
+app.delete("/api/salary-rules/:id", async (req, res) => {
+  try {
+    await prisma.salaryRule.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
   }
