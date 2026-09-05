@@ -60,7 +60,7 @@ export default function AppShell({ children }) {
           <span className="brand" onClick={() => go("/")}>
             OXP
           </span>
-          {isHR && (
+          {user && (
             <Dropdown label="Employees" items={[{ to: "/employees", label: "Employees" }, { to: "/schedules", label: "Working Schedules" }]} onNavigate={go} />
           )}
           {isHR && (

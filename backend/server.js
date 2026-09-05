@@ -44,6 +44,13 @@ const PERMISSIONS = [
   { method: "GET", path: "/api/employees/:id/contracts", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
   { method: "GET", path: "/api/employees/:id/attendance", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
   { method: "GET", path: "/api/employees/:id/time-off", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  // Attendance (API.md §4)
+  { method: "POST", path: "/api/attendance/check-in", roles: [ROLES.EMP] },
+  { method: "POST", path: "/api/attendance/:id/check-out", roles: [ROLES.EMP] },
+  { method: "GET", path: "/api/attendance", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/attendance/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/attendance/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/attendance/:id", roles: [ROLES.ADM] },
   // Contracts (API.md §2) — /active and /validate-overlap must be listed BEFORE :id
   { method: "POST", path: "/api/contracts", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
   { method: "GET", path: "/api/contracts", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
@@ -437,6 +444,151 @@ app.get("/api/employees/:id/attendance", async (req, res) => {
     return res.json({ data: attendance });
   } catch (e) {
     return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// ---------- Attendance routes (API.md §4) ----------
+
+function attendanceHours(checkIn, checkOut) {
+  if (!checkOut) return null;
+  return Math.max(0, (new Date(checkOut).getTime() - new Date(checkIn).getTime()) / 3600000);
+}
+
+function attendanceStatus(checkIn, checkOut, workedHours, schedule) {
+  const dailyHours = Number(schedule?.totalWeeklyHours || 40) / 5;
+  if (checkOut && workedHours > dailyHours + 0.01) return "OVERTIME";
+  const day = new Date(checkIn).getDay();
+  const shift = schedule?.shifts?.find((item) => item.dayOfWeek === (day === 0 ? 7 : day));
+  if (shift) {
+    const [hour, minute] = shift.startTime.split(":").map(Number);
+    const expected = new Date(checkIn);
+    expected.setHours(hour, minute, 0, 0);
+    if (new Date(checkIn).getTime() > expected.getTime() + 15 * 60000) return "LATE";
+  }
+  return "PRESENT";
+}
+
+function isAttendanceOwner(req, attendance) {
+  return req.user.role !== ROLES.EMP || req.user.employeeId === attendance.employeeId;
+}
+
+async function getAttendanceWithSchedule(id) {
+  return prisma.attendance.findUnique({
+    where: { id },
+    include: { employee: { include: { workingSchedule: { include: { shifts: true } } } } },
+  });
+}
+
+// POST /api/attendance/check-in — opens one attendance record for the logged-in employee.
+app.post("/api/attendance/check-in", async (req, res) => {
+  try {
+    if (!req.user.employeeId) {
+      return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "User is not linked to an employee" } });
+    }
+    const open = await prisma.attendance.findFirst({ where: { employeeId: req.user.employeeId, checkOut: null } });
+    if (open) {
+      return res.status(409).json({ data: null, error: { code: "ALREADY_CHECKED_IN", message: "You already have an open attendance record" } });
+    }
+    const employee = await prisma.employee.findUnique({
+      where: { id: req.user.employeeId },
+      include: { workingSchedule: { include: { shifts: true } } },
+    });
+    if (!employee) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Employee not found" } });
+    const now = new Date();
+    const attendance = await prisma.attendance.create({
+      data: { employeeId: employee.id, checkIn: now, status: attendanceStatus(now, null, null, employee.workingSchedule) },
+    });
+    return res.status(201).json({ data: attendance });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/attendance/:id/check-out — closes only the employee's own open record.
+app.post("/api/attendance/:id/check-out", async (req, res) => {
+  try {
+    const attendance = await getAttendanceWithSchedule(req.params.id);
+    if (!attendance) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Attendance record not found" } });
+    if (!isAttendanceOwner(req, attendance)) return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    if (attendance.checkOut) return res.status(409).json({ data: null, error: { code: "ALREADY_CHECKED_OUT", message: "Attendance is already closed" } });
+    const checkOut = new Date();
+    const workedHours = attendanceHours(attendance.checkIn, checkOut);
+    const updated = await prisma.attendance.update({
+      where: { id: attendance.id },
+      data: { checkOut, workedHours, status: attendanceStatus(attendance.checkIn, checkOut, workedHours, attendance.employee.workingSchedule) },
+    });
+    return res.json({ data: updated });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/attendance — HR list with employee, status and date filters.
+app.get("/api/attendance", async (req, res) => {
+  try {
+    const { employeeId, status, from, to } = req.query;
+    const where = {
+      ...(employeeId && { employeeId }),
+      ...(status && { status }),
+      ...((from || to) && { checkIn: { ...(from && { gte: new Date(from) }), ...(to && { lte: new Date(to) }) } }),
+    };
+    const attendance = await prisma.attendance.findMany({
+      where,
+      include: { employee: { select: { id: true, name: true, department: true } } },
+      orderBy: { checkIn: "desc" },
+    });
+    return res.json({ data: attendance });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/attendance/:id — HR or owning employee.
+app.get("/api/attendance/:id", async (req, res) => {
+  try {
+    const attendance = await getAttendanceWithSchedule(req.params.id);
+    if (!attendance) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Attendance record not found" } });
+    if (!isAttendanceOwner(req, attendance)) return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    return res.json({ data: attendance });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/attendance/:id — HR correction; recalculates hours and stamps the editor.
+app.patch("/api/attendance/:id", async (req, res) => {
+  try {
+    const attendance = await getAttendanceWithSchedule(req.params.id);
+    if (!attendance) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Attendance record not found" } });
+    const checkIn = req.body.checkIn ? new Date(req.body.checkIn) : attendance.checkIn;
+    const checkOut = req.body.checkOut === null ? null : req.body.checkOut ? new Date(req.body.checkOut) : attendance.checkOut;
+    if (Number.isNaN(checkIn.getTime()) || (checkOut && Number.isNaN(checkOut.getTime())) || (checkOut && checkOut < checkIn)) {
+      return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Check-out must be after check-in" } });
+    }
+    const workedHours = attendanceHours(checkIn, checkOut);
+    const updated = await prisma.attendance.update({
+      where: { id: attendance.id },
+      data: {
+        checkIn,
+        checkOut,
+        workedHours,
+        status: req.body.status || attendanceStatus(checkIn, checkOut, workedHours, attendance.employee.workingSchedule),
+        correctedBy: req.user.userId,
+      },
+    });
+    return res.json({ data: updated });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/attendance/:id — Admin-only hard delete.
+app.delete("/api/attendance/:id", async (req, res) => {
+  try {
+    await prisma.attendance.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
   }
 });
 
