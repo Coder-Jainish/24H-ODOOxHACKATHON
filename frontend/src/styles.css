@@ -372,9 +372,15 @@ body {
 .badge-active,
 .badge-running,
 .badge-approved,
-.badge-present {
+.badge-present,
+.badge-overtime {
   background: #d4edda;
   color: #155724;
+}
+
+.badge-late {
+  background: #fff3cd;
+  color: #856404;
 }
 
 .badge-draft,
