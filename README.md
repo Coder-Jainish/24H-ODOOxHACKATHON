@@ -24,7 +24,7 @@ A 2-step payrun wizard that automatically identifies period-active contracts, ex
 
 - **Frontend:** Next.js / React, TypeScript, Tailwind CSS, Lucide Icons
 - **Backend:** Node.js (Express)
-- **Database & ORM:** PostgreSQL / SQLite with Prisma ORM
+- **Database & ORM:** SQLite with Prisma ORM
 - **Document Engine:** Headless PDF generator for printable payslips
 - **Authentication:** Role-Based Access Control (RBAC) with 5 distinct roles
 
@@ -45,8 +45,8 @@ A 2-step payrun wizard that automatically identifies period-active contracts, ex
 ## 6. Setup Requirements
 
 ### Current Setup (Hackathon MVP)
-1. **Runtime:** Node.js (v18+) or Python (3.10+)
-2. **Database:** SQLite or PostgreSQL instance
+1. **Runtime:** Node.js (v18+)
+2. **Database:** SQLite
 3. **Configuration:** `.env` file for database connection and auth secret keys
 4. **Data Seeding:** Run seed script to populate demo employees, contracts, schedules, and leave types
 
