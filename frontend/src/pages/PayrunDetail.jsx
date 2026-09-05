@@ -11,6 +11,12 @@ const STATE_PILL = {
   CLOSED: "closed",
 };
 
+const DELIVERY_PILL = {
+  PENDING: "dlv-pending",
+  SENT: "dlv-sent",
+  FAILED: "dlv-failed",
+};
+
 // Validate / Mark Paid are HPM/ADM actions (API.md §10); HPU can compute but not approve.
 const ACTION_ROLES = ["HR_PAYROLL_MANAGER", "ADMIN"];
 
@@ -51,6 +57,19 @@ export default function PayrunDetail() {
     }
   }
 
+  // Bulk dispatch (API.md §10) — shows Sent/Failed counts, then refreshes delivery statuses.
+  async function sendAll() {
+    setBusy("send");
+    try {
+      const { dispatched, failed } = await api(`/payruns/${id}/send`, { method: "POST" });
+      alert(`Payslips sent: ${dispatched} delivered, ${failed} failed`);
+      reload();
+    } catch (err) {
+      alert(err.message);
+      setBusy(null);
+    }
+  }
+
   function fmtDate(d) {
     if (!d) return "—";
     return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -83,6 +102,11 @@ export default function PayrunDetail() {
           {state === "VALIDATED" && canAction && (
             <button className="btn status-pill-sa" disabled={!!busy} onClick={() => run("mark-paid")}>
               {busy === "mark-paid" ? "Marking…" : "Mark Paid"}
+            </button>
+          )}
+          {state === "PAID" && canAction && (
+            <button className="btn status-pill-sa" disabled={!!busy} onClick={sendAll}>
+              {busy === "send" ? "Sending…" : "Send Payslips"}
             </button>
           )}
           {(state === "PAID" || state === "CLOSED") && (
@@ -130,6 +154,7 @@ export default function PayrunDetail() {
             <th className="num">Deductions</th>
             <th className="num">Net</th>
             <th className="num">Lines</th>
+            <th>Delivery</th>
           </tr>
         </thead>
         <tbody>
@@ -151,11 +176,16 @@ export default function PayrunDetail() {
               <td className="num">₹{Number(p.deductionTotal || 0).toLocaleString()}</td>
               <td className="num"><strong>₹{Number(p.netTotal || 0).toLocaleString()}</strong></td>
               <td className="num">{p.lines?.length ?? 0}</td>
+              <td>
+                <span className={"status-pill " + (DELIVERY_PILL[p.deliveryStatus] || "dlv-pending")}>
+                  {p.deliveryStatus || "PENDING"}
+                </span>
+              </td>
             </tr>
           ))}
           {batch.payslips.length === 0 && (
             <tr>
-              <td colSpan={7} className="muted">No employees in this payrun yet.</td>
+              <td colSpan={8} className="muted">No employees in this payrun yet.</td>
             </tr>
           )}
         </tbody>

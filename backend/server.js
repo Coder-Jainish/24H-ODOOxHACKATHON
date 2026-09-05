@@ -110,6 +110,8 @@ const PERMISSIONS = [
   { method: "GET", path: "/api/payslips/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
   { method: "PATCH", path: "/api/payslips/:id", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "DELETE", path: "/api/payslips/:id", roles: [ROLES.ADM] },
+  { method: "POST", path: "/api/payslips/:id/pdf", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "POST", path: "/api/payslips/:id/send", roles: [ROLES.HPM, ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -1765,6 +1767,175 @@ app.delete("/api/payslips/:id", async (req, res) => {
     await prisma.payslipLine.deleteMany({ where: { payslipId: payslip.id } });
     await prisma.payslip.delete({ where: { id: payslip.id } });
     return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Payslip PDF + delivery (API.md §11, TASKS.md Step 11) ----------
+
+// Escape a PDF string literal (parentheses/backslashes) and collapse non-ASCII
+// punctuation (·, arrow, dashes) into clean ASCII so the base-14 font embeds safely.
+function pdfEscape(s) {
+  return String(s ?? "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[·•]/g, "-")
+    .replace(/[→⇒]/g, "->")
+    .replace(/[—–]/g, "-")
+    .replace(/[\\()]/g, (ch) => "\\" + ch)
+    .replace(/[^\x20-\x7E]/g, "?");
+}
+
+// Approximate Helvetica glyph advance (thousandths of em) per character class.
+function charW(ch) {
+  if (ch === " ") return 278;
+  if ("0123456789.".includes(ch)) return 556;
+  if (".,:;()[]/".includes(ch)) return 278;
+  return 500;
+}
+
+function textW(str, size) {
+  let u = 0;
+  for (const ch of String(str)) u += charW(ch);
+  return (u * size) / 1000;
+}
+
+// Minimal dependency-free single-page PDF builder (base-14 Helvetica), so no package is added.
+function buildPayslipPdf(payslip) {
+  const emp = payslip.employee || {};
+  const batch = payslip.payrunBatch || {};
+  const structure = batch.salaryStructure || {};
+  const lines = payslip.lines || [];
+  const money = (n) => Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtDate = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—");
+
+  const W = 612;
+  const H = 792;
+  const ML = 48; // page margin (equal both sides → centered block)
+  const RIGHT = W - ML;
+  const COLW = 380; // centered money column width
+  const COX = (W - COLW) / 2; // column left edge
+  const COR = COX + COLW; // column right edge (all amounts align here)
+  const ops = [];
+
+  // One text line: left, right, or horizontally centered on the page.
+  const line = (y, t, { size = 11, x = ML, bold = false, right = false, center = false, color = "0 0 0" } = {}) => {
+    let tx;
+    if (center) tx = (W - textW(t, size)) / 2;
+    else if (right) tx = COR - textW(t, size);
+    else tx = x;
+    ops.push(`BT /${bold ? "F2" : "F1"} ${size} Tf ${color} rg 1 0 0 1 ${tx.toFixed(2)} ${y.toFixed(2)} Tm (${pdfEscape(t)}) Tj ET`);
+  };
+
+  // Money slab: centered-column band with one text line vertically centered inside it.
+  const slab = (bottom, height, t, { size = 11, bold = false, right = false, color = "0 0 0", bg = "0.96 0.95 0.93" } = {}) => {
+    ops.push(`${bg} rg ${COX} ${bottom} ${COLW} ${height} re f`);
+    line(bottom + (height - size) / 2 + size * 0.25, t, { size, bold, right, color });
+  };
+
+  // Thin centered rule.
+  const rule = (y) => ops.push(`0.88 0.88 0.88 rg ${COX} ${y} ${COLW} 0.8 re f`);
+
+  // Header: full-width purple band, brand + centered title.
+  ops.push(`0.443 0.294 0.404 rg ${ML} ${H - 92} ${W - ML * 2} 54 re f`);
+  line(H - 46, "PeoplePay360", { size: 9, center: true, color: "0.78 0.74 0.76" });
+  line(H - 66, "PAYSLIP", { size: 18, bold: true, center: true, color: "1 1 1" });
+
+  // Employee block (centered).
+  line(678, emp.name || "-", { size: 15, bold: true, center: true });
+  line(660, `${emp.jobPosition || ""} · ${emp.department || ""}`, { size: 10, center: true, color: "0.35 0.35 0.35" });
+  rule(646);
+
+  // Pay-run block: centered label + centered dates, muted structure/id beneath.
+  line(628, "PAY RUN", { size: 9, bold: true, center: true, color: "0.45 0.45 0.45" });
+  line(610, `${fmtDate(batch.periodStart)}  →  ${fmtDate(batch.periodEnd)}`, { size: 12 });
+  line(593, `Structure: ${structure.name || "-"}`, { size: 9, center: true, color: "0.4 0.4 0.4" });
+  line(580, `Payrun ID: ${batch.id || "-"}`, { size: 9, center: true, color: "0.4 0.4 0.4" });
+  rule(566);
+
+  // Breakdown: centered section label, rows inside the centered money column.
+  line(548, "BREAKDOWN", { size: 9, bold: true, center: true, color: "0.45 0.45 0.45" });
+  let y = 528;
+  for (const l of lines) {
+    line(y, `${l.category}  ·  ${l.salaryRule?.name || l.salaryRule?.code}`, { size: 10.5, x: COX + 8 });
+    line(y, money(l.amount), { size: 10.5, right: true });
+    y -= 16;
+  }
+
+  // Totals: tall slabs with clear gaps so Gross / Deductions / Net never overlap.
+  slab(444, 30, "Gross Salary", { bold: true });
+  slab(444, 30, money(payslip.grossTotal), { bold: true, right: true });
+  slab(405, 30, "Total Deductions", { bold: true });
+  slab(405, 30, money(payslip.deductionTotal), { bold: true, right: true });
+  slab(360, 36, "Net Pay", { size: 14, bold: true, color: "1 1 1", bg: "0.443 0.294 0.404" });
+  slab(360, 36, money(payslip.netTotal), { size: 14, bold: true, right: true, color: "1 1 1", bg: "0.443 0.294 0.404" });
+
+  // Footer (centered).
+  line(54, `Generated ${new Date().toLocaleString("en-IN")}`, { size: 8, center: true, color: "0.55 0.55 0.55" });
+  line(40, "This is a system-generated payslip. All amounts are in INR and subject to final validation.", { size: 8, center: true, color: "0.55 0.55 0.55" });
+
+  // Content stream + PDF object graph with byte-accurate offsets.
+  const streamData = ops.join("\n");
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0]; // index 0 = free-object entry; offsets[i] = byte offset of object i
+  const addObj = (body) => {
+    const repr = `${offsets.length} 0 obj\n${body}\nendobj\n`;
+    offsets.push(Buffer.byteLength(pdf, "binary"));
+    pdf += repr;
+  };
+  addObj(`<< /Type /Catalog /Pages 2 0 R >>\n`);
+  addObj(`<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n`);
+  addObj(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>\n`);
+  addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\n`);
+  addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\n`);
+  addObj(`<< /Length ${Buffer.byteLength(streamData, "binary")} >>\nstream\n${streamData}\nendstream\n`);
+
+  const xrefStart = Buffer.byteLength(pdf, "binary");
+  pdf += `xref\n0 ${offsets.length}\n`;
+  for (let i = 0; i < offsets.length; i++) {
+    pdf += i === 0 ? `0000000000 65535 f \n` : `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+  return Buffer.from(pdf, "binary");
+}
+
+// POST /api/payslips/:id/pdf — generate + serve the payslip PDF (EMP sees own only).
+app.post("/api/payslips/:id/pdf", async (req, res) => {
+  try {
+    const payslip = await prisma.payslip.findUnique({
+      where: { id: req.params.id },
+      include: {
+        employee: true,
+        lines: { orderBy: { sequence: "asc" }, include: { salaryRule: true } },
+        payrunBatch: { include: { salaryStructure: true } },
+      },
+    });
+    if (!payslip) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payslip not found" } });
+    if (req.user.role === ROLES.EMP && payslip.employeeId !== req.user.employeeId) {
+      return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    }
+    const buf = buildPayslipPdf(payslip);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="payslip-${payslip.id}.pdf"`);
+    return res.send(buf);
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// POST /api/payslips/:id/send — single-payslip resend (simulated dispatch).
+app.post("/api/payslips/:id/send", async (req, res) => {
+  try {
+    const payslip = await prisma.payslip.findUnique({ where: { id: req.params.id } });
+    if (!payslip) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payslip not found" } });
+    const ok = Math.random() > 0.05; // ~5% simulated failure rate
+    const updated = await prisma.payslip.update({
+      where: { id: payslip.id },
+      data: { deliveryStatus: ok ? "SENT" : "FAILED" },
+      include: payslipInclude.include,
+    });
+    return res.json({ data: updated });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
   }

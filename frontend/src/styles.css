@@ -1284,3 +1284,88 @@ label.emp-pick-row:hover {
   font-weight: 700;
   color: #212529;
 }
+
+/* ============ Payslip Document (PDF download section) ============ */
+.doc-card {
+  padding: 1rem 1.25rem;
+  background: #fff;
+}
+
+.doc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.doc-head .section-title {
+  margin-bottom: 0;
+}
+
+.doc-body {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+}
+
+.doc-meta {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  min-width: 240px;
+}
+
+.doc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.doc-label {
+  flex: 0 0 72px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+
+.doc-value {
+  font-size: 0.85rem;
+  color: #333;
+  word-break: break-word;
+}
+
+.doc-value.mono {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.doc-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+}
+
+.doc-note {
+  margin: 0.9rem 0 0;
+  padding: 0.55rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.84rem;
+}
+
+.doc-note.ok {
+  background: #eefaf2;
+  color: #1a7f4b;
+  border: 1px solid #cdeeda;
+}
+
+.doc-note.err {
+  background: #fdf0ef;
+  color: #c0392b;
+  border: 1px solid #f3d2ce;
+}
