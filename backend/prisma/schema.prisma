@@ -30,6 +30,8 @@ model User {
   employee     Employee? @relation(fields: [employeeId], references: [id])
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+
+  decidedRequests TimeOffRequest[] @relation("DecidedTimeOffRequests")
 }
 
 // ---------- HR Core ----------
@@ -159,10 +161,11 @@ model TimeOffRequest {
   startDate     DateTime
   endDate       DateTime
   reason        String?
-  status        String       @default("PENDING")
+status        String       @default("PENDING")
   approvedById  String?
+  approvedBy    User?        @relation("DecidedTimeOffRequests", fields: [approvedById], references: [id])
   decidedAt     DateTime?
-  createdAt     DateTime      @default(now())
+  createdAt     DateTime     @default(now())
 
   @@map("time_off_requests")
 }

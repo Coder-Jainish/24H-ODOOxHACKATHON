@@ -72,6 +72,14 @@ const PERMISSIONS = [
   { method: "GET", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
   { method: "PATCH", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
   { method: "DELETE", path: "/api/time-off/allocations/:id", roles: [ROLES.ADM] },
+  // Time Off Requests (API.md §7)
+  { method: "POST", path: "/api/time-off/requests", roles: [ROLES.EMP] },
+  { method: "GET", path: "/api/time-off/requests", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/time-off/requests/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/time-off/requests/:id", roles: [ROLES.EMP] },
+  { method: "DELETE", path: "/api/time-off/requests/:id", roles: [ROLES.EMP] },
+  { method: "POST", path: "/api/time-off/requests/:id/approve", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "POST", path: "/api/time-off/requests/:id/refuse", roles: [ROLES.HRM, ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -896,6 +904,184 @@ app.delete("/api/time-off/allocations/:id", async (req, res) => {
   try {
     await prisma.timeOffAllocation.delete({ where: { id: req.params.id } });
     return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Time Off Requests routes (API.md §7) ----------
+
+const reqInclude = {
+  employee: { select: { id: true, name: true, jobPosition: true, department: true } },
+  timeOffType: { select: { id: true, name: true, unit: true, tracksBalance: true } },
+  approvedBy: { select: { id: true, email: true, role: true } },
+};
+
+// Duration in the type's unit (DAYS → inclusive calendar days, HOURS → workday 8h) — shared by create + approve.
+function requestDurationInUnit(startDate, endDate, type) {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const days = Math.floor((end - start) / 86400000) + 1;
+  if (type?.unit === "HOURS") return days * 8;
+  return days;
+}
+
+// POST /api/time-off/requests — EMP self creates a PENDING request
+app.post("/api/time-off/requests", async (req, res) => {
+  try {
+    const { timeOffTypeId, startDate, endDate, reason } = req.body;
+    const type = await prisma.timeOffType.findUnique({ where: { id: timeOffTypeId } });
+    if (!type) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Time off type not found" } });
+    if (!startDate || !endDate) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "startDate and endDate are required" } });
+    if (new Date(endDate) < new Date(startDate)) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "endDate must be on or after startDate" } });
+    const request = await prisma.timeOffRequest.create({
+      data: {
+        employeeId: req.user.employeeId,
+        timeOffTypeId,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        reason: reason || null,
+      },
+      include: reqInclude,
+    });
+    return res.status(201).json({ data: request });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/time-off/requests — HR approver queue, filters
+app.get("/api/time-off/requests", async (req, res) => {
+  try {
+    const { status, employeeId } = req.query;
+    const requests = await prisma.timeOffRequest.findMany({
+      where: { ...(status && { status }), ...(employeeId && { employeeId }) },
+      include: reqInclude,
+      orderBy: { createdAt: "desc" },
+    });
+    return res.json({ data: requests });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/time-off/requests/:id — detail (EMP self-scoped)
+app.get("/api/time-off/requests/:id", async (req, res) => {
+  try {
+    const request = await prisma.timeOffRequest.findUnique({ where: { id: req.params.id }, include: reqInclude });
+    if (!request) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Request not found" } });
+    if (req.user.role === ROLES.EMP && request.employeeId !== req.user.employeeId) {
+      return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    }
+    return res.json({ data: request });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/time-off/requests/:id — EMP self edits while PENDING
+app.patch("/api/time-off/requests/:id", async (req, res) => {
+  try {
+    const existing = await prisma.timeOffRequest.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Request not found" } });
+    if (existing.employeeId !== req.user.employeeId) return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    if (existing.status !== "PENDING") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only pending requests can be edited" } });
+    const { startDate, endDate, reason } = req.body;
+    const request = await prisma.timeOffRequest.update({
+      where: { id: req.params.id },
+      data: {
+        ...(startDate && { startDate: new Date(startDate) }),
+        ...(endDate && { endDate: new Date(endDate) }),
+        ...(reason !== undefined && { reason: reason || null }),
+      },
+      include: reqInclude,
+    });
+    return res.json({ data: request });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/time-off/requests/:id — EMP self withdraws while PENDING
+app.delete("/api/time-off/requests/:id", async (req, res) => {
+  try {
+    const existing = await prisma.timeOffRequest.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Request not found" } });
+    if (existing.employeeId !== req.user.employeeId) return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    if (existing.status !== "PENDING") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only pending requests can be withdrawn" } });
+    await prisma.timeOffRequest.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/time-off/requests/:id/approve — HRM/ADM atomically decrements remaining balance
+app.post("/api/time-off/requests/:id/approve", async (req, res) => {
+  try {
+    const request = await prisma.timeOffRequest.findUnique({ where: { id: req.params.id }, include: { timeOffType: true } });
+    if (!request) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Request not found" } });
+    if (request.status !== "PENDING") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only pending requests can be approved" } });
+
+    const duration = requestDurationInUnit(request.startDate, request.endDate, request.timeOffType);
+
+    if (request.timeOffType.tracksBalance) {
+      const result = await prisma.$transaction(async (tx) => {
+        const allocation = await tx.timeOffAllocation.findFirst({
+          where: {
+            employeeId: request.employeeId,
+            timeOffTypeId: request.timeOffTypeId,
+            approvedByHR: true,
+            validFrom: { lte: request.startDate },
+            OR: [{ validTo: null }, { validTo: { gte: request.endDate } }],
+          },
+          orderBy: { validFrom: "asc" },
+        });
+        if (!allocation || Number(allocation.remaining) < duration) {
+          throw new Error("INSUFFICIENT_BALANCE");
+        }
+        const updatedAllocation = await tx.timeOffAllocation.update({
+          where: { id: allocation.id },
+          data: { remaining: Number(allocation.remaining) - duration },
+        });
+        const updatedRequest = await tx.timeOffRequest.update({
+          where: { id: request.id },
+          data: { status: "APPROVED", approvedById: req.user.userId, decidedAt: new Date() },
+          include: reqInclude,
+        });
+        return { updatedRequest, updatedAllocation };
+      });
+      return res.json({ data: result });
+    }
+
+    // Non-balance type (e.g. unpaid): approve without touching allocations
+    const updatedRequest = await prisma.timeOffRequest.update({
+      where: { id: request.id },
+      data: { status: "APPROVED", approvedById: req.user.userId, decidedAt: new Date() },
+      include: reqInclude,
+    });
+    return res.json({ data: { updatedRequest, updatedAllocation: null } });
+  } catch (e) {
+    if (e.message === "INSUFFICIENT_BALANCE") {
+      return res.status(400).json({ data: null, error: { code: "INSUFFICIENT_BALANCE", message: "Not enough remaining balance for this request" } });
+    }
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/time-off/requests/:id/refuse — HRM/ADM, no balance change
+app.post("/api/time-off/requests/:id/refuse", async (req, res) => {
+  try {
+    const request = await prisma.timeOffRequest.findUnique({ where: { id: req.params.id } });
+    if (!request) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Request not found" } });
+    if (request.status !== "PENDING") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only pending requests can be refused" } });
+    const { reason } = req.body;
+    const updatedRequest = await prisma.timeOffRequest.update({
+      where: { id: request.id },
+      data: { status: "REFUSED", reason: reason || request.reason || null, approvedById: req.user.userId, decidedAt: new Date() },
+      include: reqInclude,
+    });
+    return res.json({ data: { updatedRequest, updatedAllocation: null } });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
   }

@@ -38,6 +38,7 @@ export default function EmployeeTimeOff() {
         <h1>{emp.name} · Time Off</h1>
         <button className="btn" onClick={() => setShowForm(true)}>ALLOCATE LEAVE</button>
       </div>
+      <p className="page-sub">Balances are the yearly leave they've been granted; requests are the individual days they want off.</p>
 
       <div className="card">
         <h3>Balances</h3>

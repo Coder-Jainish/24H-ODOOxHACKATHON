@@ -22,6 +22,7 @@ export default function TimeOffTypes() {
           NEW
         </button>
       </div>
+      <p className="page-sub">Define the leave policies — days vs hours, whether they track a balance, and whether requests need approval.</p>
 
       {loading ? (
         <p className="muted">Loading…</p>

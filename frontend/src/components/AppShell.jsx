@@ -76,11 +76,16 @@ export default function AppShell({ children }) {
               label="Time Off"
               items={[
                 { to: "/time-off/requests", label: "Time Off Requests" },
-                { to: "/time-off/allocations", label: "Allocations" },
+                { to: "/time-off/allocations", label: "Grant Allocations" },
                 { to: "/time-off/types", label: "Time Off Types" },
               ]}
               onNavigate={go}
             />
+          )}
+          {role === "EMPLOYEE" && (
+            <span className="nav-link-plain" onClick={() => go("/time-off/requests")}>
+              My Time Off
+            </span>
           )}
           {isPayroll && (
             <Dropdown

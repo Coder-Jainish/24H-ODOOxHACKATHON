@@ -14,6 +14,7 @@ import Schedules from "./pages/Schedules";
 import TimeOffTypes from "./pages/TimeOffTypes";
 import Allocations from "./pages/Allocations";
 import EmployeeTimeOff from "./pages/EmployeeTimeOff";
+import TimeOffRequests from "./pages/TimeOffRequests";
 import "./styles.css";
 
 const HR_ROLES = ["HR_MANAGER", "HR_PAYROLL_USER", "HR_PAYROLL_MANAGER", "ADMIN"];
@@ -43,7 +44,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route path="/schedules" element={<Shell roles={HR_ROLES}><Schedules /></Shell>} />
           <Route path="/attendance" element={<Shell roles={HR_ROLES}><Placeholder title="Attendance" desc="Attendance feature lands in a later phase." /></Shell>} />
           <Route path="/employees/:id/time-off" element={<Shell roles={HR_ROLES}><EmployeeTimeOff /></Shell>} />
-          <Route path="/time-off/requests" element={<Shell roles={HR_ROLES}><Placeholder title="Time Off Requests" desc="Time Off Requests lands in a later phase." /></Shell>} />
+          <Route path="/time-off/requests" element={<Shell><TimeOffRequests /></Shell>} />
           <Route path="/time-off/allocations" element={<Shell roles={HR_ROLES}><Allocations /></Shell>} />
           <Route path="/time-off/types" element={<Shell roles={HR_ROLES}><TimeOffTypes /></Shell>} />
           <Route path="/payruns" element={<Shell roles={PAYROLL_ROLES}><Placeholder title="Payruns" desc="Payruns feature lands in a later phase." /></Shell>} />

@@ -257,6 +257,7 @@ async function main() {
       { email: "sara@oxp.com", typeId: pto.id, quota: 20 },
       { email: "sara@oxp.com", typeId: sick.id, quota: 8 },
       { email: "john@oxp.com", typeId: pto.id, quota: 22 },
+      { email: "employee@pp360.com", typeId: pto.id, quota: 20 },
     ];
     for (const t of targets) {
       const emp = await prisma.employee.findFirst({ where: { email: t.email } });
@@ -279,7 +280,7 @@ async function main() {
       }
     }
   }
-  console.log("✅ Seeded time off allocations (Aarav 24 PTO, Sara 20 PTO + 8 Sick, John 22 PTO)");
+  console.log("✅ Seeded time off allocations (Aarav 24 PTO, Sara 20 PTO + 8 Sick, John 22 PTO, EMP demo 20 PTO)");
 }
 
 main()

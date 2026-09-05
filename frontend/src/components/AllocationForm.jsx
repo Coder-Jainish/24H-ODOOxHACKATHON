@@ -76,7 +76,7 @@ export default function AllocationForm({ employee, onClose, onSaved }) {
             Valid Until <span className="muted">(optional)</span>
             <input type="date" value={form.validTo} onChange={(e) => update("validTo", e.target.value)} />
           </label>
-          <p className="muted small">New allocations start unapproved (pending) and become spendable once confirmed.</p>
+          <p className="muted small">This is a balance grant (yearly quota), not a day-off request. New grants start as pending until confirmed by HR — only confirmed balances can be spent.</p>
           <div className="modal-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
             <button className="btn" disabled={busy}>{busy ? "Saving…" : "Allocate"}</button>

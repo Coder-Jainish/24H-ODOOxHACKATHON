@@ -35,6 +35,9 @@ export default function Allocations() {
         <h1>Time Off Allocations</h1>
         <button className="btn" onClick={() => setShowForm(true)}>NEW</button>
       </div>
+      <p className="page-sub">
+        Grant yearly leave balances to employees (e.g. 20 PTO days for the year). These balances are what employees spend time off against — separate from their individual day-off requests.
+      </p>
 
       <div className="toolbar">
         <select value={filters.employeeId} onChange={(e) => setFilters((f) => ({ ...f, employeeId: e.target.value }))}>

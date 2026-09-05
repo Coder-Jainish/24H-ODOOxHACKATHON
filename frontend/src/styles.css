@@ -298,6 +298,12 @@ body {
   color: #6c757d;
 }
 
+.page-sub {
+  color: #6c757d;
+  font-size: 0.85rem;
+  margin: -0.25rem 0 1rem;
+}
+
 /* ---------- Generic UI primitives (used by feature screens later) ---------- */
 .page-header {
   display: flex;
@@ -411,6 +417,67 @@ body {
 
 .small {
   font-size: 0.78rem;
+}
+
+/* ---------- Time Off Requests ---------- */
+.balance-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.balance-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  background: #f8f6fa;
+  border: 1px solid #e3dce8;
+  border-radius: 8px;
+  padding: 0.5rem 0.85rem;
+  min-width: 140px;
+  font-size: 0.85rem;
+}
+
+.balance-chip span {
+  color: #555;
+}
+
+.balance-chip .status-pill {
+  align-self: flex-start;
+  margin-top: 0.2rem;
+}
+
+.toolbar-select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ced4da;
+  border-radius: 5px;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.approve-btn {
+  background: #e9f7ef;
+  color: #1a7f4b;
+  border-color: #b8e6cd;
+}
+
+.approve-btn:hover {
+  background: #d4efde;
+}
+
+.refuse-btn {
+  background: #fdeaea;
+  color: #b02a2a;
+  border-color: #f3c7c7;
+}
+
+.refuse-btn:hover {
+  background: #f8d5d5;
 }
 
 .check-row {
