@@ -28,8 +28,9 @@ export default function PayrunDetail() {
   const [warnings, setWarnings] = useState([]);
   const [busy, setBusy] = useState(null);
 
+  // Loads the batch, then its warnings; returns a promise so callers can await the refresh.
   function reload() {
-    api(`/payruns/${id}`)
+    return api(`/payruns/${id}`)
       .then((b) => {
         setBatch(b);
         return api(`/payruns/${id}/warnings`);
@@ -43,29 +44,23 @@ export default function PayrunDetail() {
 
   useEffect(() => {
     reload();
+    // Refresh on window focus so a batch paid/validated from another tab never shows stale action buttons.
+    const onFocus = () => reload();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Runs a state-machine action (compute/validate/mark-paid). Busy is always cleared in
+  // finally so a successful action never leaves the button stuck as "Marking…".
   async function run(action) {
     setBusy(action);
     try {
       await api(`/payruns/${id}/${action}`, { method: "POST" });
-      reload();
+      await reload();
     } catch (err) {
       alert(err.message);
-      setBusy(null);
-    }
-  }
-
-  // Bulk dispatch (API.md §10) — shows Sent/Failed counts, then refreshes delivery statuses.
-  async function sendAll() {
-    setBusy("send");
-    try {
-      const { dispatched, failed } = await api(`/payruns/${id}/send`, { method: "POST" });
-      alert(`Payslips sent: ${dispatched} delivered, ${failed} failed`);
-      reload();
-    } catch (err) {
-      alert(err.message);
+    } finally {
       setBusy(null);
     }
   }
@@ -102,11 +97,6 @@ export default function PayrunDetail() {
           {state === "VALIDATED" && canAction && (
             <button className="btn status-pill-sa" disabled={!!busy} onClick={() => run("mark-paid")}>
               {busy === "mark-paid" ? "Marking…" : "Mark Paid"}
-            </button>
-          )}
-          {state === "PAID" && canAction && (
-            <button className="btn status-pill-sa" disabled={!!busy} onClick={sendAll}>
-              {busy === "send" ? "Sending…" : "Send Payslips"}
             </button>
           )}
           {(state === "PAID" || state === "CLOSED") && (

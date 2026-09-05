@@ -1369,3 +1369,200 @@ label.emp-pick-row:hover {
   color: #c0392b;
   border: 1px solid #f3d2ce;
 }
+
+/* ============ Payroll Dashboard (Step 12) ============ */
+.dash-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.dash-filters input[type="date"] {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #d8dbe2;
+  border-radius: 6px;
+  font-size: 0.84rem;
+  color: #333;
+  background: #fff;
+}
+
+.dash-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 1.1rem;
+}
+
+.kpi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 1rem 1.1rem;
+  background: #fff;
+  border: 1px solid #eceef3;
+  border-radius: 10px;
+}
+
+.kpi-card.kpi-primary {
+  background: #71508c;
+  border-color: #71508c;
+}
+
+.kpi-card.kpi-primary .kpi-label,
+.kpi-card.kpi-primary .kpi-sub {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.kpi-card.kpi-primary .kpi-value {
+  color: #fff;
+}
+
+.kpi-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+
+.kpi-value {
+  font-size: 1.45rem;
+  font-weight: 800;
+  color: #212529;
+}
+
+.kpi-sub {
+  font-size: 0.74rem;
+  color: #9aa0a6;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .dash-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-chart-card {
+  padding: 1rem 1.1rem;
+}
+
+.trend-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.dept-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-top: 0.25rem;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.bar-label {
+  flex: 0 0 110px;
+  font-size: 0.8rem;
+  color: #555;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-track {
+  flex: 1;
+  height: 12px;
+  background: #f3f1f6;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a78bbf, #71508c);
+  border-radius: 6px;
+  min-width: 2px;
+}
+
+.bar-val {
+  flex: 0 0 auto;
+  font-size: 0.76rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  border: 1px solid transparent;
+}
+
+.alert-type {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  background: #eef0f4;
+  color: #777;
+}
+
+.alert-msg {
+  color: #333;
+}
+
+.alert-high {
+  background: #fdf0ef;
+  border-color: #f3d2ce;
+}
+
+.alert-high .alert-type {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.alert-medium {
+  background: #fdf6e8;
+  border-color: #f2e2bd;
+}
+
+.alert-medium .alert-type {
+  background: #f0a020;
+  color: #fff;
+}
+
+.alert-info {
+  background: #f3f6fb;
+  border-color: #e2e8f0;
+}
+
+.alert-info .alert-type {
+  background: #5b7bd5;
+  color: #fff;
+}

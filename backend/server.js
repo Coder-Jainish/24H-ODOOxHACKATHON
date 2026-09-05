@@ -112,6 +112,11 @@ const PERMISSIONS = [
   { method: "DELETE", path: "/api/payslips/:id", roles: [ROLES.ADM] },
   { method: "POST", path: "/api/payslips/:id/pdf", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
   { method: "POST", path: "/api/payslips/:id/send", roles: [ROLES.HPM, ROLES.ADM] },
+  // Dashboard (API.md §12) — HPU/HPM/ADM; HRM gets a dept-scoped view via the UI (optional)
+  { method: "GET", path: "/api/dashboard/kpis", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/dashboard/trends/net-salary", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/dashboard/department-cost", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/dashboard/alerts", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -1938,6 +1943,178 @@ app.post("/api/payslips/:id/send", async (req, res) => {
     return res.json({ data: updated });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Dashboard routes (API.md §12) ----------
+// All KPIs are computed on every request against the live tables — never cached/static.
+
+function monthKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// Does a batch period intersect the optional [start, end] window?
+function inPeriod(periodStart, periodEnd, start, end) {
+  const ps = new Date(periodStart).getTime();
+  const pe = new Date(periodEnd).getTime();
+  const s = start ? new Date(start).getTime() : null;
+  const e = end ? new Date(end).getTime() : null;
+  if (s !== null && pe < s) return false;
+  if (e !== null && ps > e) return false;
+  return true;
+}
+
+// Resolves department / employment-type filters into an allowed employee-id set.
+// employmentType is matched against the employee's ACTIVE contract salary structure name.
+async function dashboardEmployeeScope(department, employmentType) {
+  const where = department && department !== "all" ? { department } : {};
+  const employees = await prisma.employee.findMany({
+    where,
+    include: { contracts: { include: { salaryStructure: true } } },
+  });
+  if (!employmentType || employmentType === "all") return employees.map((e) => e.id);
+  const ids = [];
+  for (const e of employees) {
+    const active = e.contracts.find((c) => c.status === "ACTIVE");
+    const type = active?.salaryStructure?.name?.toLowerCase() || "";
+    if (type.includes(employmentType.toLowerCase())) ids.push(e.id);
+  }
+  return ids;
+}
+
+// GET /api/dashboard/kpis — headline payroll metrics with optional filters
+app.get("/api/dashboard/kpis", async (req, res) => {
+  try {
+    const { periodStart, periodEnd, department, employmentType } = req.query;
+    const scope = await dashboardEmployeeScope(department, employmentType);
+    const payslips = await prisma.payslip.findMany({
+      include: { payrunBatch: true, employee: true },
+    });
+    const windowed = payslips.filter(
+      (p) => scope.includes(p.employeeId) && inPeriod(p.payrunBatch.periodStart, p.payrunBatch.periodEnd, periodStart, periodEnd)
+    );
+    const paid = windowed.filter((p) => ["PAID", "CLOSED"].includes(p.payrunBatch.state));
+    const totalNetPaid = Math.round(paid.reduce((s, p) => s + Number(p.netTotal || 0), 0) * 100) / 100;
+    const averageSalary =
+      windowed.length > 0
+        ? Math.round((windowed.reduce((s, p) => s + Number(p.netTotal || 0), 0) / windowed.length) * 100) / 100
+        : 0;
+
+    // Approved time off (inclusive days), date-overlapping the window.
+    const empById = {};
+    for (const e of await prisma.employee.findMany({ select: { id: true, department: true } })) empById[e.id] = e;
+    const requests = await prisma.timeOffRequest.findMany({
+      where: { status: "APPROVED" },
+      include: { employee: true },
+    });
+    let approvedTimeOffDays = 0;
+    for (const r of requests) {
+      if (!scope.includes(r.employeeId)) continue;
+      const s = periodStart ? Math.max(new Date(r.startDate).getTime(), new Date(periodStart).getTime()) : new Date(r.startDate).getTime();
+      const e = periodEnd ? Math.min(new Date(r.endDate).getTime(), new Date(periodEnd).getTime()) : new Date(r.endDate).getTime();
+      if (e < s) continue;
+      approvedTimeOffDays += Math.round((e - s) / 86400000) + 1;
+    }
+
+    // Attendance health: share of records that are not ABSENT within the window (default last 30 days).
+    const attStart = periodStart ? new Date(periodStart) : new Date(Date.now() - 30 * 86400000);
+    const attEnd = periodEnd ? new Date(periodEnd) : new Date();
+    const attendances = await prisma.attendance.findMany({
+      where: { checkIn: { gte: attStart, lte: attEnd } },
+    });
+    const scoped = attendances.filter((a) => scope.includes(a.employeeId));
+    const attendanceHealthPct =
+      scoped.length > 0 ? Math.round((scoped.filter((a) => a.status !== "ABSENT").length / scoped.length) * 100) : 0;
+
+    return res.json({ data: { totalNetPaid, payslipsGenerated: windowed.length, averageSalary, approvedTimeOffDays, attendanceHealthPct } });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/dashboard/trends/net-salary — monthly net total for the last N months (default 6)
+app.get("/api/dashboard/trends/net-salary", async (req, res) => {
+  try {
+    const months = Math.min(Math.max(parseInt(req.query.months) || 6, 1), 24);
+    const now = new Date();
+    const buckets = {};
+    const order = [];
+    for (let i = months - 1; i >= 0; i--) {
+      const key = monthKey(new Date(now.getFullYear(), now.getMonth() - i, 1));
+      buckets[key] = { month: key, totalNet: 0 };
+      order.push(key);
+    }
+    const payslips = await prisma.payslip.findMany({ include: { payrunBatch: true } });
+    for (const p of payslips) {
+      const key = monthKey(new Date(p.payrunBatch.periodStart));
+      if (buckets[key]) buckets[key].totalNet += Number(p.netTotal || 0);
+    }
+    return res.json({ data: order.map((k) => ({ ...buckets[k], totalNet: Math.round(buckets[k].totalNet * 100) / 100 })) });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/dashboard/department-cost — spend + headcount per department
+app.get("/api/dashboard/department-cost", async (req, res) => {
+  try {
+    const { periodStart, periodEnd } = req.query;
+    const payslips = await prisma.payslip.findMany({ include: { payrunBatch: true, employee: true } });
+    const groups = {};
+    for (const p of payslips) {
+      if (!inPeriod(p.payrunBatch.periodStart, p.payrunBatch.periodEnd, periodStart, periodEnd)) continue;
+      const d = p.employee?.department || "Unknown";
+      if (!groups[d]) groups[d] = { department: d, headcount: new Set(), totalSpend: 0 };
+      groups[d].headcount.add(p.employeeId);
+      groups[d].totalSpend += Number(p.netTotal || 0);
+    }
+    const data = Object.values(groups)
+      .map((g) => ({ department: g.department, headcount: g.headcount.size, totalSpend: Math.round(g.totalSpend * 100) / 100 }))
+      .sort((a, b) => b.totalSpend - a.totalSpend);
+    return res.json({ data });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/dashboard/alerts — operational feed from live tables
+app.get("/api/dashboard/alerts", async (req, res) => {
+  try {
+    const alerts = [];
+    const now = new Date();
+    const in60 = new Date(now.getTime() + 60 * 86400000);
+    const employees = await prisma.employee.findMany({
+      include: { contracts: true, attendances: true },
+    });
+
+    for (const e of employees) {
+      const active = e.contracts.find((c) => c.status === "ACTIVE");
+      if (!active) {
+        alerts.push({ type: "CONTRACT", severity: "high", message: `${e.name} has no active contract` });
+        continue;
+      }
+      if (active.endDate && new Date(active.endDate).getTime() < now.getTime()) {
+        alerts.push({ type: "EXPIRING", severity: "high", message: `${e.name}'s contract expired on ${active.endDate.toISOString().slice(0, 10)}` });
+      } else if (active.endDate && new Date(active.endDate).getTime() <= in60.getTime()) {
+        alerts.push({ type: "EXPIRING", severity: "medium", message: `${e.name}'s contract expires on ${active.endDate.toISOString().slice(0, 10)}` });
+      }
+      const weekAgo = new Date(now.getTime() - 7 * 86400000);
+      if (!e.attendances.some((a) => a.checkIn >= weekAgo)) {
+        alerts.push({ type: "ATTENDANCE", severity: "info", message: `${e.name} has no attendance recorded in the last 7 days` });
+      }
+    }
+
+    const pending = await prisma.timeOffRequest.count({ where: { status: "PENDING" } });
+    if (pending) alerts.push({ type: "APPROVAL", severity: "info", message: `${pending} time off request(s) awaiting approval` });
+
+    const failedDlv = await prisma.payslip.count({ where: { deliveryStatus: "FAILED" } });
+    if (failedDlv) alerts.push({ type: "DELIVERY", severity: "high", message: `${failedDlv} payslip(s) failed to send` });
+
+    const sev = { high: 0, medium: 1, info: 2 };
+    alerts.sort((a, b) => sev[a.severity] - sev[b.severity] || a.message.localeCompare(b.message));
+    return res.json({ data: alerts });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
   }
 });
 
