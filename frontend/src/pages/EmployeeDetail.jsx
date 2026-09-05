@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import EmployeeForm from "../components/EmployeeForm";
+import AllocationForm from "../components/AllocationForm";
+import { fmtDate } from "../components/AllocationTable";
 
 function initials(name = "") {
   return name.split(" ").map((w) => (w[0] || "").toUpperCase()).slice(0, 2).join("");
@@ -11,13 +13,21 @@ export default function EmployeeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [emp, setEmp] = useState(null);
+  const [timeOff, setTimeOff] = useState({ allocations: [] });
   const [loading, setLoading] = useState(true);
   const [showEdit, setShowEdit] = useState(false);
+  const [showAllocate, setShowAllocate] = useState(false);
 
   function load() {
     setLoading(true);
-    api(`/employees/${id}`)
-      .then(setEmp)
+    Promise.all([
+      api(`/employees/${id}`),
+      api(`/employees/${id}/time-off`).catch(() => ({ allocations: [] })),
+    ])
+      .then(([e, t]) => {
+        setEmp(e);
+        setTimeOff(t);
+      })
       .catch((e) => alert(e.message))
       .finally(() => setLoading(false));
   }
@@ -72,10 +82,45 @@ export default function EmployeeDetail() {
           <Field label="Work Email" value={emp.email} />
           <Field label="Status" value={<span className={"badge " + (emp.isActive ? "badge-active" : "badge-inactive")}>{emp.isActive ? "Active" : "Inactive"}</span>} />
         </div>
+        <div className="card detail-card">
+          <h3>Time Off Balances</h3>
+          {timeOff.allocations.length === 0 ? (
+            <p className="muted">No allocations yet.</p>
+          ) : (
+            timeOff.allocations.map((a) => (
+              <div className="field" key={a.id}>
+                <span className="field-label">
+                  {a.timeOffType?.name}
+                  {!a.approvedByHR && <span className="status-pill amber">Pending</span>}
+                </span>
+                <span className="field-value">
+                  <strong>{Number(a.remaining)}</strong> / {Number(a.quota)} {a.timeOffType?.unit === "HOURS" ? "hrs" : "days"}
+                  <span className="muted small"> · {fmtDate(a.validFrom)} → {fmtDate(a.validTo)}</span>
+                </span>
+              </div>
+            ))
+          )}
+          <div className="modal-actions" style={{ marginTop: "0.75rem" }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setShowAllocate(true)}>
+              Allocate Leave
+            </button>
+          </div>
+        </div>
       </div>
 
       {showEdit && (
         <EmployeeForm employee={emp} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); load(); }} />
+      )}
+
+      {showAllocate && (
+        <AllocationForm
+          employee={emp}
+          onClose={() => setShowAllocate(false)}
+          onSaved={() => {
+            setShowAllocate(false);
+            load();
+          }}
+        />
       )}
     </div>
   );

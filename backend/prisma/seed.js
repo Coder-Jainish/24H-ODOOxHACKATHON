@@ -247,6 +247,39 @@ async function main() {
     if (!exists) await prisma.timeOffType.create({ data: t });
   }
   console.log("✅ Seeded 3 time off types (Paid Time Off, Sick Leave, Comp Off)");
+
+  // Time Off Allocations — annual balances for sample employees, pre-approved (spendable)
+  const pto = await prisma.timeOffType.findFirst({ where: { name: "Paid Time Off" } });
+  const sick = await prisma.timeOffType.findFirst({ where: { name: "Sick Leave" } });
+  if (pto && sick) {
+    const targets = [
+      { email: "aarav@oxp.com", typeId: pto.id, quota: 24, unit: "DAYS" },
+      { email: "sara@oxp.com", typeId: pto.id, quota: 20 },
+      { email: "sara@oxp.com", typeId: sick.id, quota: 8 },
+      { email: "john@oxp.com", typeId: pto.id, quota: 22 },
+    ];
+    for (const t of targets) {
+      const emp = await prisma.employee.findFirst({ where: { email: t.email } });
+      if (!emp) continue;
+      const exists = await prisma.timeOffAllocation.findFirst({
+        where: { employeeId: emp.id, timeOffTypeId: t.typeId, validFrom: new Date("2026-01-01") },
+      });
+      if (!exists) {
+        await prisma.timeOffAllocation.create({
+          data: {
+            employeeId: emp.id,
+            timeOffTypeId: t.typeId,
+            quota: t.quota,
+            remaining: t.quota,
+            validFrom: new Date("2026-01-01"),
+            validTo: null,
+            approvedByHR: true,
+          },
+        });
+      }
+    }
+  }
+  console.log("✅ Seeded time off allocations (Aarav 24 PTO, Sara 20 PTO + 8 Sick, John 22 PTO)");
 }
 
 main()

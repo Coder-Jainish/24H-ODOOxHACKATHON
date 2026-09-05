@@ -66,6 +66,12 @@ const PERMISSIONS = [
   { method: "GET", path: "/api/time-off/types/:id", roles: ["AUTH"] },
   { method: "PATCH", path: "/api/time-off/types/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
   { method: "DELETE", path: "/api/time-off/types/:id", roles: [ROLES.ADM] },
+  // Time Off Allocations (API.md §6)
+  { method: "POST", path: "/api/time-off/allocations", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/time-off/allocations", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/time-off/allocations/:id", roles: [ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -798,6 +804,97 @@ app.delete("/api/time-off/types/:id", async (req, res) => {
       return res.status(400).json({ data: null, error: { code: "CANNOT_DELETE", message: "Time off type is referenced by allocations/requests" } });
     }
     await prisma.timeOffType.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Time Off Allocations routes (API.md §6) ----------
+
+const allocInclude = { employee: { select: { id: true, name: true } }, timeOffType: { select: { id: true, name: true, unit: true, tracksBalance: true, requiresApproval: true } } };
+
+// POST /api/time-off/allocations — create (approvedByHR defaults to false)
+app.post("/api/time-off/allocations", async (req, res) => {
+  try {
+    const { employeeId, timeOffTypeId, quota, validFrom, validTo } = req.body;
+    const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+    const type = await prisma.timeOffType.findUnique({ where: { id: timeOffTypeId } });
+    if (!employee || !type) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Employee or time off type not found" } });
+    if (quota == null || Number(quota) <= 0) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Quota must be a positive number" } });
+    const allocation = await prisma.timeOffAllocation.create({
+      data: {
+        employeeId,
+        timeOffTypeId,
+        quota,
+        remaining: quota,
+        validFrom: new Date(validFrom),
+        validTo: validTo ? new Date(validTo) : null,
+      },
+      include: allocInclude,
+    });
+    return res.status(201).json({ data: allocation });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/time-off/allocations — list (HR roles), filters
+app.get("/api/time-off/allocations", async (req, res) => {
+  try {
+    const { employeeId, timeOffTypeId } = req.query;
+    const allocations = await prisma.timeOffAllocation.findMany({
+      where: { ...(employeeId && { employeeId }), ...(timeOffTypeId && { timeOffTypeId }) },
+      include: allocInclude,
+      orderBy: { validFrom: "desc" },
+    });
+    return res.json({ data: allocations });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/time-off/allocations/:id — detail (EMP self-scoped)
+app.get("/api/time-off/allocations/:id", async (req, res) => {
+  try {
+    const allocation = await prisma.timeOffAllocation.findUnique({ where: { id: req.params.id }, include: allocInclude });
+    if (!allocation) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Allocation not found" } });
+    if (req.user.role === ROLES.EMP && allocation.employeeId !== req.user.employeeId) {
+      return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    }
+    return res.json({ data: allocation });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/time-off/allocations/:id — update (approve makes spendable)
+app.patch("/api/time-off/allocations/:id", async (req, res) => {
+  try {
+    const { quota, validTo, approvedByHR } = req.body;
+    const existing = await prisma.timeOffAllocation.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Allocation not found" } });
+    const data = {};
+    if (quota !== undefined) {
+      const q = Number(quota);
+      if (q <= 0) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Quota must be a positive number" } });
+      // Rebase remaining so adjustments keep the delta from old quota.
+      data.quota = q;
+      data.remaining = q - (Number(existing.quota) - Number(existing.remaining));
+    }
+    if (validTo !== undefined) data.validTo = validTo ? new Date(validTo) : null;
+    if (approvedByHR !== undefined) data.approvedByHR = !!approvedByHR;
+    const allocation = await prisma.timeOffAllocation.update({ where: { id: req.params.id }, data, include: allocInclude });
+    return res.json({ data: allocation });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/time-off/allocations/:id — Admin only
+app.delete("/api/time-off/allocations/:id", async (req, res) => {
+  try {
+    await prisma.timeOffAllocation.delete({ where: { id: req.params.id } });
     return res.json({ data: { success: true } });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
