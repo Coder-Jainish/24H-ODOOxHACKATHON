@@ -44,6 +44,16 @@ const PERMISSIONS = [
   { method: "GET", path: "/api/employees/:id/contracts", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
   { method: "GET", path: "/api/employees/:id/attendance", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
   { method: "GET", path: "/api/employees/:id/time-off", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  // Contracts (API.md §2) — /active and /validate-overlap must be listed BEFORE :id
+  { method: "POST", path: "/api/contracts", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/contracts", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/contracts/active", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/contracts/validate-overlap", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/contracts/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/contracts/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/contracts/:id", roles: [ROLES.ADM] },
+  // Salary structures — minimal read-only for contract form picker (full CRUD in Phase 8)
+  { method: "GET", path: "/api/salary-structures", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -386,6 +396,206 @@ app.get("/api/employees/:id/time-off", async (req, res) => {
     return res.json({ data: { requests, allocations } });
   } catch (e) {
     return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// ---------- Contract routes (API.md §2) ----------
+// NOTE: /active and /validate-overlap are registered before /:id so they are matched first.
+
+// Shared helper: resolves the ACTIVE contract covering a date for an employee.
+// Built once here, reused by the Payrun engine in later phases (TASKS.md guardrails).
+function getActiveContract(employeeId, date = new Date()) {
+  return prisma.contract.findFirst({
+    where: {
+      employeeId,
+      status: "ACTIVE",
+      startDate: { lte: date },
+      OR: [{ endDate: null }, { endDate: { gte: date } }],
+    },
+    orderBy: { startDate: "desc" },
+  });
+}
+
+// Overlap check (application constraint from DATABASE.md):
+// no two ACTIVE contracts for same employee may overlap [startDate, endDate].
+// Two ranges overlap when A.start <= B.end AND (A.end is null OR A.end >= B.start).
+function hasOverlap(employeeId, startDate, endDate, excludeId) {
+  return prisma.contract.findFirst({
+    where: {
+      employeeId,
+      status: "ACTIVE",
+      id: excludeId ? { not: excludeId } : undefined,
+      startDate: { lte: endDate || new Date("9999-12-31") },
+      OR: [{ endDate: null }, { endDate: { gte: startDate } }],
+    },
+  });
+}
+
+// GET /api/salary-structures — minimal read-only list (powers contract form picker)
+app.get("/api/salary-structures", async (_req, res) => {
+  try {
+    const structures = await prisma.salaryStructure.findMany({ orderBy: { name: "asc" } });
+    return res.json({ data: structures });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// POST /api/contracts — create (rejects on overlap)
+app.post("/api/contracts", async (req, res) => {
+  try {
+    const { employeeId, startDate, endDate, wage, department, position, salaryStructureId, scheduleOverrideId, status } = req.body;
+    const overlap = await hasOverlap(employeeId, new Date(startDate), endDate ? new Date(endDate) : null);
+    if (overlap) {
+      return res.status(400).json({
+        data: null,
+        error: {
+          code: "OVERLAP",
+          message: `Overlaps with existing ${overlap.status} contract (${overlap.startDate.toISOString().slice(0, 10)}${overlap.endDate ? " → " + overlap.endDate.toISOString().slice(0, 10) : " → open-ended"})`,
+        },
+      });
+    }
+    const contract = await prisma.contract.create({
+      data: {
+        employeeId,
+        startDate: new Date(startDate),
+        endDate: endDate ? new Date(endDate) : null,
+        wage,
+        department,
+        position,
+        salaryStructureId,
+        scheduleOverrideId,
+        status: status || "ACTIVE",
+      },
+      include: { employee: { select: { id: true, name: true } }, salaryStructure: true },
+    });
+    return res.status(201).json({ data: contract });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/contracts — list with filters
+app.get("/api/contracts", async (req, res) => {
+  try {
+    const { employeeId, status } = req.query;
+    const where = {};
+    if (employeeId) where.employeeId = employeeId;
+    if (status) where.status = status;
+    const contracts = await prisma.contract.findMany({
+      where,
+      include: {
+        employee: { select: { id: true, name: true } },
+        salaryStructure: { select: { id: true, name: true } },
+      },
+      orderBy: [{ employeeId: "asc" }, { startDate: "desc" }],
+    });
+    return res.json({ data: contracts });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/contracts/active — period-active contract for employee (reused by Payrun engine later)
+app.get("/api/contracts/active", async (req, res) => {
+  try {
+    const { employeeId, date } = req.query;
+    if (!employeeId) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "employeeId required" } });
+    const contract = await getActiveContract(employeeId, date ? new Date(date) : new Date());
+    return res.json({ data: contract });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// POST /api/contracts/validate-overlap — pre-save check surfaced in UI before submit
+app.post("/api/contracts/validate-overlap", async (req, res) => {
+  try {
+    const { employeeId, startDate, endDate, excludeContractId } = req.body;
+    const overlap = await hasOverlap(employeeId, new Date(startDate), endDate ? new Date(endDate) : null, excludeContractId);
+    return res.json({
+      data: {
+        overlap: !!overlap,
+        conflictingContractId: overlap ? overlap.id : null,
+        message: overlap ? `Overlaps with existing contract starting ${overlap.startDate.toISOString().slice(0, 10)}` : null,
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/contracts/:id — detail (EMP allowed only for own contract via self-check)
+app.get("/api/contracts/:id", async (req, res) => {
+  try {
+    const contract = await prisma.contract.findUnique({
+      where: { id: req.params.id },
+      include: {
+        employee: { select: { id: true, name: true } },
+        salaryStructure: true,
+        scheduleOverride: true,
+      },
+    });
+    if (!contract) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Contract not found" } });
+    if (req.user.role === ROLES.EMP && req.user.employeeId !== contract.employeeId) {
+      return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    }
+    return res.json({ data: contract });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/contracts/:id — update, re-validates overlap on date/status change
+app.patch("/api/contracts/:id", async (req, res) => {
+  try {
+    const existing = await prisma.contract.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Contract not found" } });
+
+    const { startDate, endDate, wage, department, position, salaryStructureId, status } = req.body;
+    const newStart = startDate ? new Date(startDate) : existing.startDate;
+    const newEnd = endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
+
+    if ((startDate || endDate !== undefined || status) && status !== "CANCELLED") {
+      const overlap = await hasOverlap(existing.employeeId, newStart, newEnd, existing.id);
+      if (overlap) {
+        return res.status(400).json({
+          data: null,
+          error: { code: "OVERLAP", message: "Update would overlap with an existing ACTIVE contract" },
+        });
+      }
+    }
+
+    const contract = await prisma.contract.update({
+      where: { id: req.params.id },
+      data: {
+        ...(startDate && { startDate: new Date(startDate) }),
+        ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
+        ...(wage !== undefined && { wage }),
+        ...(department && { department }),
+        ...(position && { position }),
+        ...(salaryStructureId && { salaryStructureId }),
+        ...(status && { status }),
+      },
+      include: { employee: { select: { id: true, name: true } }, salaryStructure: true },
+    });
+    return res.json({ data: contract });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/contracts/:id — Admin only, blocked if referenced by any Payslip
+app.delete("/api/contracts/:id", async (req, res) => {
+  try {
+    const ref = await prisma.payslip.count({ where: { contractId: req.params.id } });
+    if (ref > 0) {
+      return res.status(400).json({ data: null, error: { code: "CANNOT_DELETE", message: "Contract is referenced by payslips" } });
+    }
+    await prisma.contract.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
   }
 });
 

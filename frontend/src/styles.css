@@ -642,3 +642,38 @@ body {
   color: #212529;
   text-align: right;
 }
+
+/* ---------- Contracts ---------- */
+.form-row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.form-row label {
+  flex: 1;
+}
+
+.contract-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.row-running {
+  background: #f7fff9;
+}
+
+.active-badge {
+  margin-left: 0.5rem;
+}
+
+.back-btn {
+  margin-bottom: 0.5rem;
+}
+
+.overlap-error {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.82rem;
+}

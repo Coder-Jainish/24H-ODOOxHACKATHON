@@ -158,6 +158,53 @@ async function main() {
   }
 
   console.log("✅ Seeded 4 sample employees (Aarav, Sara, John, Neha)");
+
+  // Sample contracts — gives the Contracts list/employee page something to show.
+  // Aarav: one expired (2025) + one Running (2026, open-ended) — the active-contract badge.
+  const aarav = await prisma.employee.findUnique({ where: { email: "aarav@oxp.com" } });
+
+  if (aarav && sara) {
+    const existing = await prisma.contract.findFirst({ where: { employeeId: aarav.id } });
+    if (!existing) {
+      await prisma.contract.create({
+        data: {
+          employeeId: aarav.id,
+          startDate: new Date("2025-07-01"),
+          endDate: new Date("2025-12-31"),
+          wage: 78000,
+          department: "Finance",
+          position: "Payroll Specialist",
+          salaryStructureId: salaryStructure.id,
+          status: "EXPIRED",
+        },
+      });
+      await prisma.contract.create({
+        data: {
+          employeeId: aarav.id,
+          startDate: new Date("2026-01-01"),
+          endDate: null,
+          wage: 85000,
+          department: "Finance",
+          position: "Payroll Specialist",
+          salaryStructureId: salaryStructure.id,
+          status: "ACTIVE",
+        },
+      });
+      await prisma.contract.create({
+        data: {
+          employeeId: sara.id,
+          startDate: new Date("2026-01-01"),
+          endDate: null,
+          wage: 95000,
+          department: "HR",
+          position: "HR Officer",
+          salaryStructureId: salaryStructure.id,
+          status: "ACTIVE",
+        },
+      });
+      console.log("✅ Seeded 3 sample contracts (Aarav: 1 expired + 1 running, Sara: running)");
+    }
+  }
 }
 
 main()
