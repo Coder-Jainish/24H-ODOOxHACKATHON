@@ -312,6 +312,68 @@ async function main() {
   }
   console.log("✅ Seeded time off allocations (Aarav 24 PTO, Sara 20 PTO + 8 Sick, John 22 PTO, EMP demo 20 PTO)");
 
+  // Attendance history — deterministic records make the HR attendance screen
+  // useful immediately after seeding and keep repeated seeds idempotent.
+  const attendanceTargets = [
+    { email: "aarav@oxp.com", days: ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"] },
+    { email: "sara@oxp.com", days: ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"] },
+    { email: "john@oxp.com", days: ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"] },
+    { email: "employee@pp360.com", days: ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"] },
+  ];
+  for (const target of attendanceTargets) {
+    const employee = await prisma.employee.findUnique({ where: { email: target.email } });
+    if (!employee) continue;
+    for (const [index, day] of target.days.entries()) {
+      const checkIn = new Date(`${day}T09:00:00.000Z`);
+      const checkOut = new Date(`${day}T17:30:00.000Z`);
+      const exists = await prisma.attendance.findFirst({ where: { employeeId: employee.id, checkIn } });
+      if (!exists) {
+        await prisma.attendance.create({
+          data: {
+            employeeId: employee.id,
+            checkIn,
+            checkOut,
+            workedHours: 8.5,
+            status: index === 1 ? "LATE" : index === 4 ? "OVERTIME" : "PRESENT",
+          },
+        });
+      }
+    }
+  }
+  console.log("✅ Seeded 20 attendance records across 4 employees");
+
+  // Approved leave request for the workflow demo; the allocation is reduced
+  // once, only when this request is created.
+  const demoEmployee = await prisma.employee.findUnique({ where: { email: "aarav@oxp.com" } });
+  if (demoEmployee && pto) {
+    const existingRequest = await prisma.timeOffRequest.findFirst({
+      where: { employeeId: demoEmployee.id, timeOffTypeId: pto.id, startDate: new Date("2026-08-17") },
+    });
+    if (!existingRequest) {
+      const allocation = await prisma.timeOffAllocation.findFirst({
+        where: { employeeId: demoEmployee.id, timeOffTypeId: pto.id, validFrom: new Date("2026-01-01") },
+      });
+      await prisma.timeOffRequest.create({
+        data: {
+          employeeId: demoEmployee.id,
+          timeOffTypeId: pto.id,
+          startDate: new Date("2026-08-17"),
+          endDate: new Date("2026-08-18"),
+          reason: "Family event",
+          status: "APPROVED",
+          decidedAt: new Date("2026-08-10"),
+        },
+      });
+      if (allocation) {
+        await prisma.timeOffAllocation.update({
+          where: { id: allocation.id },
+          data: { remaining: Math.max(0, Number(allocation.remaining) - 2) },
+        });
+      }
+    }
+  }
+  console.log("✅ Seeded approved time-off request for workflow rehearsal");
+
   // Pre-computed payrun (June 2026) so the Payruns list/dashboard have history.
   // Bootstrap data only — computed here once; live batches go through the runtime
   // POST /api/payruns/:id/compute route (which reuses computePayslip() from server.js).
@@ -375,6 +437,11 @@ async function main() {
     }
     console.log("✅ Seeded pre-computed June 2026 payrun batch");
   }
+  await prisma.payrunBatch.updateMany({
+    where: { periodStart: new Date("2026-06-01") },
+    data: { state: "PAID", validatedAt: new Date("2026-06-30"), paidAt: new Date("2026-07-01") },
+  });
+  console.log("✅ Marked June 2026 demo payrun as PAID for dashboard history");
 }
 
 main()
