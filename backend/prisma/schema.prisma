@@ -1,0 +1,256 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Auth ----------
+// NOTE: SQLite (Prisma) doesn't support enums, so enum-like fields are stored
+// as String and validated in the application layer. Enum values:
+// RoleName: EMPLOYEE | HR_MANAGER | HR_PAYROLL_USER | HR_PAYROLL_MANAGER | ADMIN
+// ContractStatus: DRAFT | ACTIVE | EXPIRED | CANCELLED
+// TimeOffUnit: DAYS | HOURS
+// RequestStatus: PENDING | APPROVED | REFUSED
+// RuleCategory: BASIC | ALLOWANCE | GROSS | DEDUCTION | NET
+// CalculationType: FIXED | PERCENTAGE | FORMULA
+// PayrunState: DRAFT | COMPUTED | VALIDATED | PAID | CLOSED
+// AttendanceStatus: PRESENT | LATE | ABSENT | OVERTIME | MISSING_CHECKOUT
+// DeliveryStatus: PENDING | SENT | FAILED
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         String
+  isActive     Boolean   @default(true)
+  employeeId   String?   @unique
+  employee     Employee? @relation(fields: [employeeId], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ---------- HR Core ----------
+
+model Employee {
+  id                String           @id @default(uuid())
+  name              String
+  email             String           @unique
+  department        String
+  jobPosition       String
+  managerId         String?
+  manager           Employee?        @relation("ManagerHierarchy", fields: [managerId], references: [id])
+  reports           Employee[]       @relation("ManagerHierarchy")
+  workingScheduleId String?
+  workingSchedule   WorkingSchedule? @relation(fields: [workingScheduleId], references: [id])
+  isActive          Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  contracts   Contract[]
+  attendances Attendance[]
+  allocations TimeOffAllocation[]
+  requests    TimeOffRequest[]
+  user        User?
+  payslips    Payslip[]
+}
+
+model Contract {
+  id                String         @id @default(uuid())
+  employeeId        String
+  employee          Employee       @relation(fields: [employeeId], references: [id])
+  startDate         DateTime
+  endDate           DateTime?
+  wage              Decimal
+  department        String
+  position          String
+  salaryStructureId String
+  salaryStructure   SalaryStructure @relation(fields: [salaryStructureId], references: [id])
+  scheduleOverrideId String?
+  scheduleOverride  WorkingSchedule? @relation("ContractScheduleOverride", fields: [scheduleOverrideId], references: [id])
+  status            String         @default("DRAFT")
+  createdAt         DateTime       @default(now())
+
+  payslips Payslip[]
+
+  @@index([employeeId, startDate, endDate])
+}
+
+model WorkingSchedule {
+  id               String           @id @default(uuid())
+  name             String
+  totalWeeklyHours Decimal          @default(0)
+  shifts           ScheduleShift[]
+  employees        Employee[]
+  contractOverrides Contract[]      @relation("ContractScheduleOverride")
+  createdAt        DateTime         @default(now())
+
+  @@map("working_schedules")
+}
+
+model ScheduleShift {
+  id                String          @id @default(uuid())
+  workingScheduleId String
+  workingSchedule   WorkingSchedule @relation(fields: [workingScheduleId], references: [id])
+  dayOfWeek         Int
+  startTime         String
+  endTime           String
+  breakMinutes      Int             @default(0)
+
+  @@map("schedule_shifts")
+}
+
+// ---------- Attendance ----------
+
+model Attendance {
+  id          String           @id @default(uuid())
+  employeeId  String
+  employee    Employee         @relation(fields: [employeeId], references: [id])
+  checkIn     DateTime
+  checkOut    DateTime?
+  workedHours Decimal?
+  status      String           @default("PRESENT")
+  correctedBy String?
+  createdAt   DateTime         @default(now())
+
+  @@index([employeeId, checkIn])
+  @@map("attendances")
+}
+
+// ---------- Time Off ----------
+
+model TimeOffType {
+  id              String   @id @default(uuid())
+  name            String
+  unit            String
+  requiresApproval Boolean @default(true)
+  tracksBalance   Boolean  @default(true)
+
+  allocations TimeOffAllocation[]
+  requests    TimeOffRequest[]
+
+  @@map("time_off_types")
+}
+
+model TimeOffAllocation {
+  id            String      @id @default(uuid())
+  employeeId    String
+  employee      Employee    @relation(fields: [employeeId], references: [id])
+  timeOffTypeId String
+  timeOffType   TimeOffType @relation(fields: [timeOffTypeId], references: [id])
+  quota         Decimal
+  remaining     Decimal
+  validFrom     DateTime
+  validTo       DateTime?
+  approvedByHR  Boolean     @default(false)
+
+  @@index([employeeId, timeOffTypeId])
+  @@map("time_off_allocations")
+}
+
+model TimeOffRequest {
+  id            String        @id @default(uuid())
+  employeeId    String
+  employee      Employee      @relation(fields: [employeeId], references: [id])
+  timeOffTypeId String
+  timeOffType   TimeOffType   @relation(fields: [timeOffTypeId], references: [id])
+  startDate     DateTime
+  endDate       DateTime
+  reason        String?
+  status        String       @default("PENDING")
+  approvedById  String?
+  decidedAt     DateTime?
+  createdAt     DateTime      @default(now())
+
+  @@map("time_off_requests")
+}
+
+// ---------- Salary ----------
+
+model SalaryStructure {
+  id    String  @id @default(uuid())
+  name  String  @unique
+
+  rules     SalaryRule[]
+  contracts Contract[]
+  payrunBatches PayrunBatch[]
+
+  @@map("salary_structures")
+}
+
+model SalaryRule {
+  id                String         @id @default(uuid())
+  salaryStructureId String
+  salaryStructure   SalaryStructure @relation(fields: [salaryStructureId], references: [id])
+  name              String
+  code              String
+  category          String
+  sequence          Int
+  calculationType   String
+  value             Decimal?
+  formula           String?
+  baseRuleCode      String?
+
+  payslipLines PayslipLine[]
+
+  @@unique([salaryStructureId, code])
+  @@index([salaryStructureId, sequence])
+  @@map("salary_rules")
+}
+
+// ---------- Payrun ----------
+
+model PayrunBatch {
+  id                String         @id @default(uuid())
+  periodStart       DateTime
+  periodEnd         DateTime
+  salaryStructureId String
+  salaryStructure   SalaryStructure @relation(fields: [salaryStructureId], references: [id])
+  state             String          @default("DRAFT")
+
+  payslips    Payslip[]
+  createdAt   DateTime @default(now())
+  computedAt  DateTime?
+  validatedAt DateTime?
+  paidAt      DateTime?
+
+  @@index([periodStart, periodEnd])
+  @@map("payrun_batches")
+}
+
+model Payslip {
+  id             String        @id @default(uuid())
+  payrunBatchId  String
+  payrunBatch    PayrunBatch   @relation(fields: [payrunBatchId], references: [id])
+  employeeId     String
+  employee       Employee      @relation(fields: [employeeId], references: [id])
+  contractId     String
+  contract       Contract      @relation(fields: [contractId], references: [id])
+  grossTotal     Decimal
+  deductionTotal Decimal
+  netTotal       Decimal
+  deliveryStatus String    @default("PENDING")
+  pdfUrl         String?
+  createdAt      DateTime      @default(now())
+
+  lines PayslipLine[]
+
+  @@unique([payrunBatchId, employeeId])
+  @@map("payslips")
+}
+
+model PayslipLine {
+  id           String     @id @default(uuid())
+  payslipId    String
+  payslip      Payslip    @relation(fields: [payslipId], references: [id])
+  salaryRuleId String
+  salaryRule   SalaryRule @relation(fields: [salaryRuleId], references: [id])
+  sequence     Int
+  category     String
+  amount       Decimal
+
+  @@index([payslipId, sequence])
+  @@map("payslip_lines")
+}
