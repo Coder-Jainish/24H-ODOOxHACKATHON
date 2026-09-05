@@ -229,8 +229,10 @@ model Payslip {
   payrunBatch    PayrunBatch   @relation(fields: [payrunBatchId], references: [id])
   employeeId     String
   employee       Employee      @relation(fields: [employeeId], references: [id])
-  contractId     String
-  contract       Contract      @relation(fields: [contractId], references: [id])
+  // contractId is nullable because a payslip stub is created at wizard time,
+  // before Compute resolves which ACTIVE contract covers the period.
+  contractId     String?
+  contract       Contract?     @relation(fields: [contractId], references: [id])
   grossTotal     Decimal
   deductionTotal Decimal
   netTotal       Decimal

@@ -93,6 +93,23 @@ const PERMISSIONS = [
   { method: "PATCH", path: "/api/salary-rules/:id", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "DELETE", path: "/api/salary-rules/:id", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "POST", path: "/api/salary-rules/preview", roles: [ROLES.HPM, ROLES.ADM] },
+  // Payrun Batches (API.md §10) — HPU/HPM/ADM for core flow; HPM/ADM for state transitions
+  { method: "POST", path: "/api/payruns", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/payruns", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/payruns/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/payruns/:id/warnings", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/payruns/:id/compute", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "PATCH", path: "/api/payruns/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/payruns/:id", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/payruns/:id/validate", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/payruns/:id/mark-paid", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/payruns/:id/close", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/payruns/:id/send", roles: [ROLES.HPM, ROLES.ADM] },
+  // Payslips (API.md §11)
+  { method: "GET", path: "/api/payslips", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/payslips/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/payslips/:id", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/payslips/:id", roles: [ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -1339,6 +1356,414 @@ app.patch("/api/salary-rules/:id", async (req, res) => {
 app.delete("/api/salary-rules/:id", async (req, res) => {
   try {
     await prisma.salaryRule.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Payrun Batch routes (API.md §10) ----------
+
+// Shared Prisma include for a Payslip's employee + ordered lines.
+const payslipInclude = {
+  include: {
+    employee: { select: { id: true, name: true, department: true, jobPosition: true } },
+    lines: { orderBy: { sequence: "asc" } },
+  },
+};
+
+// Validation Engine (API.md §10 — /warnings): surfaces operational issues per payrun,
+// e.g. missing contract, missing bank info, duplicate payslip, unapproved leave.
+async function buildPayrunWarnings(batch) {
+  const warnings = [];
+  const payslips = await prisma.payslip.findMany({ where: { payrunBatchId: batch.id }, include: { employee: true } });
+  for (const p of payslips) {
+    const issues = [];
+    if (!p.contractId) issues.push("missing contract");
+    const pendingLeave = await prisma.timeOffRequest.count({
+      where: { employeeId: p.employeeId, status: "PENDING", startDate: { lte: batch.periodEnd }, endDate: { gte: batch.periodStart } },
+    });
+    if (pendingLeave > 0) issues.push(`${pendingLeave} unapproved leave request(s)`);
+    issues.forEach((issue) =>
+      warnings.push({ type: "PAYSLIP", message: `${p.employee?.name || p.employeeId}: ${issue}`, payslipId: p.id })
+    );
+  }
+  // Duplicate payslip guard: two ACTIVE contracts overlapping the period for the same employee
+  for (const p of payslips) {
+    if (!p.contractId) continue;
+    const dup = await prisma.contract.count({
+      where: {
+        employeeId: p.employeeId,
+        status: "ACTIVE",
+        id: { not: p.contractId },
+        startDate: { lte: batch.periodEnd },
+        OR: [{ endDate: null }, { endDate: { gte: batch.periodStart } }],
+      },
+    });
+    if (dup > 0) warnings.push({ type: "DUPLICATE_CONTRACT", message: `${p.employee?.name}: overlapping ACTIVE contracts in period`, payslipId: p.id });
+  }
+  return warnings;
+}
+
+// POST /api/payruns — create a DRAFT batch (Wizard Step 1 + 2 combined submit)
+app.post("/api/payruns", async (req, res) => {
+  try {
+    const { periodStart, periodEnd, salaryStructureId, employeeIds } = req.body;
+    if (!periodStart || !periodEnd || !salaryStructureId) {
+      return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "periodStart, periodEnd and salaryStructureId are required" } });
+    }
+    const structure = await prisma.salaryStructure.findUnique({ where: { id: salaryStructureId } });
+    if (!structure) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Salary structure not found" } });
+    const batch = await prisma.payrunBatch.create({
+      data: {
+        periodStart: new Date(periodStart),
+        periodEnd: new Date(periodEnd),
+        salaryStructureId,
+        state: "DRAFT",
+      },
+    });
+    // Store selected employees via pre-created (but un-computed) payslip stubs so the
+    // batch detail can show who's included before Compute runs.
+    if (Array.isArray(employeeIds) && employeeIds.length) {
+      const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } } });
+      await prisma.payslip.createMany({
+        data: employees.map((e) => ({
+          payrunBatchId: batch.id,
+          employeeId: e.id,
+          contractId: null, // filled on compute
+          grossTotal: 0,
+          deductionTotal: 0,
+          netTotal: 0,
+        })),
+      });
+    }
+    const full = await prisma.payrunBatch.findUnique({
+      where: { id: batch.id },
+      include: { payslips: { include: { employee: { select: { id: true, name: true } } } } },
+    });
+    return res.status(201).json({ data: full });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/payruns — list with filters, plus payrun + payslip counts
+app.get("/api/payruns", async (req, res) => {
+  try {
+    const { state } = req.query;
+    const batches = await prisma.payrunBatch.findMany({
+      where: { ...(state && { state }) },
+      include: {
+        salaryStructure: { select: { id: true, name: true } },
+        _count: { select: { payslips: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    // attach netTotal sum per batch for a quick glance
+    const result = await Promise.all(batches.map(async (b) => {
+      const sum = await prisma.payslip.aggregate({ where: { payrunBatchId: b.id }, _sum: { netTotal: true } });
+      return { ...b, netSum: Number(sum._sum.netTotal || 0) };
+    }));
+    return res.json({ data: result });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/payruns/:id — detail with payslip summaries
+app.get("/api/payruns/:id", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({
+      where: { id: req.params.id },
+      include: { salaryStructure: true, payslips: payslipInclude },
+    });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    return res.json({ data: batch });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/payruns/:id/warnings — Validation Engine output
+app.get("/api/payruns/:id/warnings", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    const warnings = await buildPayrunWarnings(batch);
+    return res.json({ data: warnings });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// POST /api/payruns/:id/compute — resolve active contracts, run rule engine, persist payslips.
+// Idempotent while DRAFT: re-running recomputes the same payslips.
+app.post("/api/payruns/:id/compute", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({
+      where: { id: req.params.id },
+      include: { salaryStructure: { include: { rules: { orderBy: { sequence: "asc" } } } } },
+    });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    if (batch.state !== "DRAFT" && batch.state !== "COMPUTED") {
+      return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Can only compute a DRAFT or COMPUTED payrun" } });
+    }
+
+    const stubs = await prisma.payslip.findMany({
+      where: { payrunBatchId: batch.id },
+      include: { employee: { select: { id: true, name: true } } },
+    });
+
+    // Determine employees to compute: any stubs already associated, else none.
+    // If no stubs exist (batch created without employees), we cannot infer; require stubs.
+    if (!stubs.length) {
+      return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "No employees selected for this payrun" } });
+    }
+
+    const periodStart = batch.periodStart;
+    const periodEnd = batch.periodEnd;
+
+    const results = await prisma.$transaction(async (tx) => {
+      let generated = 0;
+      for (const stub of stubs) {
+        const contract = await tx.contract.findFirst({
+          where: {
+            employeeId: stub.employeeId,
+            status: "ACTIVE",
+            startDate: { lte: periodStart },
+            OR: [{ endDate: null }, { endDate: { gte: periodEnd } }],
+          },
+          orderBy: { startDate: "desc" },
+        });
+        // If no active contract, keep the stub (contractId null, zero totals) so the
+        // Validation Engine can surface a "missing contract" warning.
+        if (!contract) {
+          await tx.payslipLine.deleteMany({ where: { payslipId: stub.id } });
+          await tx.payslip.update({
+            where: { id: stub.id },
+            data: { contractId: null, grossTotal: 0, deductionTotal: 0, netTotal: 0 },
+          });
+          continue;
+        }
+        const { lines, amounts } = computePayslip(batch.salaryStructure.rules, { wage: Number(contract.wage) });
+        const gross = lines.filter((l) => l.category === "BASIC" || l.category === "ALLOWANCE").reduce((s, l) => s + l.amount, 0);
+        const deductions = lines.filter((l) => l.category === "DEDUCTION").reduce((s, l) => s + l.amount, 0);
+        const net = Number(amounts.NET ?? (gross - deductions));
+        // Replace existing lines (idempotent recompute).
+        await tx.payslipLine.deleteMany({ where: { payslipId: stub.id } });
+        const payslip = await tx.payslip.update({
+          where: { id: stub.id },
+          data: {
+            contractId: contract.id,
+            grossTotal: gross,
+            deductionTotal: deductions,
+            netTotal: net,
+          },
+        });
+        await tx.payslipLine.createMany({
+          data: lines.map((l) => ({
+            payslipId: payslip.id,
+            salaryRuleId: l.salaryRuleId,
+            sequence: l.sequence,
+            category: l.category,
+            amount: l.amount,
+          })),
+        });
+        generated++;
+      }
+      const updated = await tx.payrunBatch.update({
+        where: { id: batch.id },
+        data: { state: "COMPUTED", computedAt: new Date() },
+      });
+      return { generated, updated };
+    });
+
+    const full = await prisma.payrunBatch.findUnique({
+      where: { id: batch.id },
+      include: { salaryStructure: true, payslips: payslipInclude },
+    });
+    return res.json({ data: { batch: full, generated: results.generated } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// PATCH /api/payruns/:id — update period/employees while DRAFT
+app.patch("/api/payruns/:id", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    if (batch.state !== "DRAFT") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only a DRAFT payrun can be scoped" } });
+    const data = {};
+    if (req.body.periodStart) data.periodStart = new Date(req.body.periodStart);
+    if (req.body.periodEnd) data.periodEnd = new Date(req.body.periodEnd);
+    const updated = await prisma.payrunBatch.update({ where: { id: req.params.id }, data });
+    if (Array.isArray(req.body.employeeIds)) {
+      // replace stub set while DRAFT (before compute)
+      await prisma.payslip.deleteMany({ where: { payrunBatchId: batch.id } });
+      if (req.body.employeeIds.length) {
+        await prisma.payslip.createMany({
+          data: req.body.employeeIds.map((id) => ({
+            payrunBatchId: batch.id,
+            employeeId: id,
+            contractId: null,
+            grossTotal: 0,
+            deductionTotal: 0,
+            netTotal: 0,
+          })),
+        });
+      }
+    }
+    const full = await prisma.payrunBatch.findUnique({ where: { id: batch.id }, include: { payslips: { include: { employee: { select: { id: true, name: true } } } } } });
+    return res.json({ data: full });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/payruns/:id — HPM/ADM, only while DRAFT
+app.delete("/api/payruns/:id", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    if (batch.state !== "DRAFT") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only a DRAFT payrun can be deleted" } });
+    await prisma.payslipLine.deleteMany({ where: { payslip: { payrunBatchId: batch.id } } });
+    await prisma.payslip.deleteMany({ where: { payrunBatchId: batch.id } });
+    await prisma.payrunBatch.delete({ where: { id: batch.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/payruns/:id/validate — HPM/ADM, blocked if unresolved warnings exist
+app.post("/api/payruns/:id/validate", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    if (batch.state !== "COMPUTED") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only a COMPUTED payrun can be validated" } });
+    const warnings = await buildPayrunWarnings(batch);
+    if (warnings.length) {
+      return res.status(400).json({ data: null, error: { code: "UNRESOLVED_WARNINGS", message: `Resolve ${warnings.length} warning(s) before validating`, warnings } });
+    }
+    const updated = await prisma.payrunBatch.update({ where: { id: batch.id }, data: { state: "VALIDATED", validatedAt: new Date() } });
+    return res.json({ data: updated });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/payruns/:id/mark-paid — HPM/ADM, locks batch + child payslips
+app.post("/api/payruns/:id/mark-paid", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    if (batch.state !== "VALIDATED") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only a VALIDATED payrun can be marked paid" } });
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.payrunBatch.update({ where: { id: batch.id }, data: { state: "PAID", paidAt: new Date() } });
+      // Lock: once PAID, payslips are read-only (enforced in API.md §11 PATCH guard)
+      return tx.payrunBatch.findUnique({ where: { id: batch.id }, include: { salaryStructure: true, payslips: payslipInclude } });
+    });
+    return res.json({ data: updated });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/payruns/:id/close — final state after send
+app.post("/api/payruns/:id/close", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    if (batch.state !== "PAID") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only a PAID payrun can be closed" } });
+    const updated = await prisma.payrunBatch.update({ where: { id: batch.id }, data: { state: "CLOSED" } });
+    return res.json({ data: updated });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// POST /api/payruns/:id/send — simulated bulk dispatch (marks deliveryStatus)
+app.post("/api/payruns/:id/send", async (req, res) => {
+  try {
+    const batch = await prisma.payrunBatch.findUnique({ where: { id: req.params.id } });
+    if (!batch) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payrun not found" } });
+    if (batch.state !== "PAID") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only a PAID payrun can be sent" } });
+    const payslips = await prisma.payslip.findMany({ where: { payrunBatchId: batch.id } });
+    let dispatched = 0;
+    let failed = 0;
+    for (const p of payslips) {
+      const ok = Math.random() > 0.05; // ~5% simulated failure rate
+      await prisma.payslip.update({ where: { id: p.id }, data: { deliveryStatus: ok ? "SENT" : "FAILED" } });
+      if (ok) dispatched++; else failed++;
+    }
+    return res.json({ data: { dispatched, failed } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Payslip routes (API.md §11) ----------
+
+// GET /api/payslips — list (HPU/HPM/ADM) with filters
+app.get("/api/payslips", async (req, res) => {
+  try {
+    const { payrunBatchId, employeeId } = req.query;
+    const payslips = await prisma.payslip.findMany({
+      where: { ...(payrunBatchId && { payrunBatchId }), ...(employeeId && { employeeId }) },
+      include: { employee: { select: { id: true, name: true, department: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    return res.json({ data: payslips });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/payslips/:id — detail (EMP sees own only)
+app.get("/api/payslips/:id", async (req, res) => {
+  try {
+    const payslip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: payslipInclude.include });
+    if (!payslip) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payslip not found" } });
+    if (req.user.role === ROLES.EMP && payslip.employeeId !== req.user.employeeId) {
+      return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    }
+    return res.json({ data: payslip });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/payslips/:id — HPM/ADM, limited, blocked if batch PAID (locked)
+app.patch("/api/payslips/:id", async (req, res) => {
+  try {
+    const payslip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: { payrunBatch: true } });
+    if (!payslip) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payslip not found" } });
+    if (payslip.payrunBatch.state === "PAID" || payslip.payrunBatch.state === "CLOSED") {
+      return res.status(400).json({ data: null, error: { code: "LOCKED", message: "Payslip is locked after the batch is paid" } });
+    }
+    const { deliveryStatus } = req.body;
+    const updated = await prisma.payslip.update({
+      where: { id: payslip.id },
+      data: { ...(deliveryStatus && { deliveryStatus }) },
+      include: payslipInclude.include,
+    });
+    return res.json({ data: updated });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/payslips/:id — ADM, blocked if batch PAID
+app.delete("/api/payslips/:id", async (req, res) => {
+  try {
+    const payslip = await prisma.payslip.findUnique({ where: { id: req.params.id }, include: { payrunBatch: true } });
+    if (!payslip) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Payslip not found" } });
+    if (payslip.payrunBatch.state === "PAID" || payslip.payrunBatch.state === "CLOSED") {
+      return res.status(400).json({ data: null, error: { code: "LOCKED", message: "Payslip is locked after the batch is paid" } });
+    }
+    await prisma.payslipLine.deleteMany({ where: { payslipId: payslip.id } });
+    await prisma.payslip.delete({ where: { id: payslip.id } });
     return res.json({ data: { success: true } });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });

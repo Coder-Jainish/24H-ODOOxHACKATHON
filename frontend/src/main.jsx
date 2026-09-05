@@ -17,6 +17,10 @@ import EmployeeTimeOff from "./pages/EmployeeTimeOff";
 import TimeOffRequests from "./pages/TimeOffRequests";
 import SalaryStructures from "./pages/SalaryStructures";
 import SalaryRules from "./pages/SalaryRules";
+import Payruns from "./pages/Payruns";
+import PayrunDetail from "./pages/PayrunDetail";
+import Payslips from "./pages/Payslips";
+import PayslipDetail from "./pages/PayslipDetail";
 import "./styles.css";
 
 const HR_ROLES = ["HR_MANAGER", "HR_PAYROLL_USER", "HR_PAYROLL_MANAGER", "ADMIN"];
@@ -49,8 +53,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route path="/time-off/requests" element={<Shell><TimeOffRequests /></Shell>} />
           <Route path="/time-off/allocations" element={<Shell roles={HR_ROLES}><Allocations /></Shell>} />
           <Route path="/time-off/types" element={<Shell roles={HR_ROLES}><TimeOffTypes /></Shell>} />
-          <Route path="/payruns" element={<Shell roles={PAYROLL_ROLES}><Placeholder title="Payruns" desc="Payruns feature lands in a later phase." /></Shell>} />
-          <Route path="/payslips" element={<Shell roles={PAYROLL_ROLES}><Placeholder title="Payslips" desc="Payslips feature lands in a later phase." /></Shell>} />
+          <Route path="/payruns" element={<Shell roles={PAYROLL_ROLES}><Payruns /></Shell>} />
+          <Route path="/payruns/:id" element={<Shell roles={PAYROLL_ROLES}><PayrunDetail /></Shell>} />
+          <Route path="/payslips" element={<Shell roles={PAYROLL_ROLES}><Payslips /></Shell>} />
+          <Route path="/payslips/:id" element={<Shell roles={PAYROLL_ROLES}><PayslipDetail /></Shell>} />
           <Route path="/salary-structures" element={<Shell roles={CONFIG_ROLES}><SalaryStructures /></Shell>} />
           <Route path="/salary-rules" element={<Shell roles={CONFIG_ROLES}><SalaryRules /></Shell>} />
         </Routes>

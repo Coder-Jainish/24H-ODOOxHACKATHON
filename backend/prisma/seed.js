@@ -80,49 +80,51 @@ async function main() {
     });
   }
 
-  // Basic salary structure rules (Basic, HRA, PF, Net) for future Phases
-  await prisma.salaryRule.createMany({
-    data: [
-      {
-        salaryStructureId: salaryStructure.id,
-        name: "Basic Salary",
-        code: "BASIC",
-        category: "BASIC",
-        sequence: 1,
-        calculationType: "FIXED",
-        value: 50000,
-      },
-      {
-        salaryStructureId: salaryStructure.id,
-        name: "House Rent Allowance",
-        code: "HRA",
-        category: "ALLOWANCE",
-        sequence: 2,
-        calculationType: "PERCENTAGE",
-        value: 20,
-        baseRuleCode: "BASIC",
-      },
-      {
-        salaryStructureId: salaryStructure.id,
-        name: "Provident Fund",
-        code: "PF",
-        category: "DEDUCTION",
-        sequence: 3,
-        calculationType: "PERCENTAGE",
-        value: 12,
-        baseRuleCode: "BASIC",
-      },
-      {
-        salaryStructureId: salaryStructure.id,
-        name: "Net Salary",
-        code: "NET",
-        category: "NET",
-        sequence: 4,
-        calculationType: "FORMULA",
-        formula: "BASIC + HRA - PF",
-      },
-    ],
-  });
+  // Basic salary structure rules (Basic, HRA, PF, Net) — idempotent upserts
+  const salaryRules = [
+    {
+      name: "Basic Salary",
+      code: "BASIC",
+      category: "BASIC",
+      sequence: 1,
+      calculationType: "FIXED",
+      value: 50000,
+    },
+    {
+      name: "House Rent Allowance",
+      code: "HRA",
+      category: "ALLOWANCE",
+      sequence: 2,
+      calculationType: "PERCENTAGE",
+      value: 20,
+      baseRuleCode: "BASIC",
+    },
+    {
+      name: "Provident Fund",
+      code: "PF",
+      category: "DEDUCTION",
+      sequence: 3,
+      calculationType: "PERCENTAGE",
+      value: 12,
+      baseRuleCode: "BASIC",
+    },
+    {
+      name: "Net Salary",
+      code: "NET",
+      category: "NET",
+      sequence: 4,
+      calculationType: "FORMULA",
+      formula: "BASIC + HRA - PF",
+    },
+  ];
+  for (const r of salaryRules) {
+    const exists = await prisma.salaryRule.findFirst({
+      where: { salaryStructureId: salaryStructure.id, code: r.code },
+    });
+    if (!exists) {
+      await prisma.salaryRule.create({ data: { salaryStructureId: salaryStructure.id, ...r } });
+    }
+  }
 
   console.log("✅ Seeded 5 role accounts:");
   console.log("   employee@pp360.com  (EMPLOYEE)        → password: password123");
@@ -206,6 +208,34 @@ async function main() {
     }
   }
 
+  // Sample contracts (continued) — active contracts for John + the demo employee,
+  // so the Payrun wizard (Step 9) has more than 2 employees with an active wage.
+  const john = await prisma.employee.findUnique({ where: { email: "john@oxp.com" } });
+  const demoEmp = await prisma.employee.findUnique({ where: { email: "employee@pp360.com" } });
+  const extraContracts = [
+    { employee: john, wage: 70000, department: "Engineering", position: "Developer" },
+    { employee: demoEmp, wage: 65000, department: "Engineering", position: "Software Engineer" },
+  ];
+  for (const c of extraContracts) {
+    if (!c.employee) continue;
+    const exists = await prisma.contract.findFirst({ where: { employeeId: c.employee.id, status: "ACTIVE" } });
+    if (!exists) {
+      await prisma.contract.create({
+        data: {
+          employeeId: c.employee.id,
+          startDate: new Date("2026-01-01"),
+          endDate: null,
+          wage: c.wage,
+          department: c.department,
+          position: c.position,
+          salaryStructureId: salaryStructure.id,
+          status: "ACTIVE",
+        },
+      });
+    }
+  }
+  console.log("✅ Seeded active contracts for John and the demo employee");
+
   // Sample working schedule — Standard 9–6, Mon–Fri (40 hrs/wk), assigned to sample employees
   const existingSchedule = await prisma.workingSchedule.findFirst({ where: { name: "Standard 9-6" } });
   let standardSchedule = existingSchedule;
@@ -281,6 +311,70 @@ async function main() {
     }
   }
   console.log("✅ Seeded time off allocations (Aarav 24 PTO, Sara 20 PTO + 8 Sick, John 22 PTO, EMP demo 20 PTO)");
+
+  // Pre-computed payrun (June 2026) so the Payruns list/dashboard have history.
+  // Bootstrap data only — computed here once; live batches go through the runtime
+  // POST /api/payruns/:id/compute route (which reuses computePayslip() from server.js).
+  const juneBatch = await prisma.payrunBatch.findFirst({ where: { periodStart: new Date("2026-06-01") } });
+  if (!juneBatch) {
+    const rules = await prisma.salaryRule.findMany({
+      where: { salaryStructureId: salaryStructure.id },
+      orderBy: { sequence: "asc" },
+    });
+    const activeContracts = await prisma.contract.findMany({ where: { status: "ACTIVE" } });
+    const batch = await prisma.payrunBatch.create({
+      data: {
+        periodStart: new Date("2026-06-01"),
+        periodEnd: new Date("2026-06-30"),
+        salaryStructureId: salaryStructure.id,
+        state: "COMPUTED",
+        computedAt: new Date(),
+      },
+    });
+    for (const contract of activeContracts) {
+      // Mirror the rule engine for bootstrap data (seed-time only).
+      const amounts = {};
+      const lines = [];
+      for (const rule of rules) {
+        let amount = 0;
+        if (rule.calculationType === "FIXED") {
+          amount = rule.value != null ? Number(rule.value) : Number(contract.wage) || 0;
+        } else if (rule.calculationType === "PERCENTAGE") {
+          amount = (amounts[rule.baseRuleCode] ?? 0) * (Number(rule.value) || 0) / 100;
+        } else if (rule.calculationType === "FORMULA") {
+          // Simple additive evaluator for bootstrap data — supports "A + B - C".
+          const tokens = (rule.formula || "").replace(/\s+/g, "").match(/[A-Za-z_][A-Za-z_0-9]*|[+\-]/g) || [];
+          let total = 0;
+          let sign = 1;
+          for (const t of tokens) {
+            if (t === "+") sign = 1;
+            else if (t === "-") sign = -1;
+            else total += sign * (amounts[t] ?? 0);
+          }
+          amount = total;
+        }
+        amounts[rule.code] = amount;
+        lines.push({ salaryRuleId: rule.id, sequence: rule.sequence, category: rule.category, amount });
+      }
+      const gross = lines.filter((l) => l.category === "BASIC" || l.category === "ALLOWANCE").reduce((s, l) => s + l.amount, 0);
+      const deductions = lines.filter((l) => l.category === "DEDUCTION").reduce((s, l) => s + l.amount, 0);
+      const net = Number(amounts.NET ?? (gross - deductions));
+      const payslip = await prisma.payslip.create({
+        data: {
+          payrunBatchId: batch.id,
+          employeeId: contract.employeeId,
+          contractId: contract.id,
+          grossTotal: gross,
+          deductionTotal: deductions,
+          netTotal: net,
+        },
+      });
+      await prisma.payslipLine.createMany({
+        data: lines.map((l) => ({ ...l, payslipId: payslip.id })),
+      });
+    }
+    console.log("✅ Seeded pre-computed June 2026 payrun batch");
+  }
 }
 
 main()
