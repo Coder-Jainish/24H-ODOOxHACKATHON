@@ -68,6 +68,7 @@ export default function EmployeeDetail() {
           <Field label="Department" value={emp.department} />
           <Field label="Job Position" value={emp.jobPosition} />
           <Field label="Manager" value={emp.manager?.name || "—"} />
+          <Field label="Working Schedule" value={emp.workingSchedule ? `${emp.workingSchedule.name} (${emp.workingSchedule.totalWeeklyHours} hrs/wk)` : "—"} />
           <Field label="Work Email" value={emp.email} />
           <Field label="Status" value={<span className={"badge " + (emp.isActive ? "badge-active" : "badge-inactive")}>{emp.isActive ? "Active" : "Inactive"}</span>} />
         </div>

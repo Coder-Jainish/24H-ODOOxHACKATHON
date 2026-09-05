@@ -205,6 +205,48 @@ async function main() {
       console.log("✅ Seeded 3 sample contracts (Aarav: 1 expired + 1 running, Sara: running)");
     }
   }
+
+  // Sample working schedule — Standard 9–6, Mon–Fri (40 hrs/wk), assigned to sample employees
+  const existingSchedule = await prisma.workingSchedule.findFirst({ where: { name: "Standard 9-6" } });
+  let standardSchedule = existingSchedule;
+  if (!existingSchedule) {
+    standardSchedule = await prisma.workingSchedule.create({
+      data: {
+        name: "Standard 9-6",
+        totalWeeklyHours: 40,
+        shifts: {
+          create: [1, 2, 3, 4, 5].map((d) => ({
+            dayOfWeek: d,
+            startTime: "09:00",
+            endTime: "18:00",
+            breakMinutes: 60,
+          })),
+        },
+      },
+    });
+  }
+
+  if (standardSchedule) {
+    const scheduleEmployees = await prisma.employee.findMany({
+      where: { workingScheduleId: null, OR: [{ email: { in: ["aarav@oxp.com", "sara@oxp.com", "john@oxp.com"] } }] },
+    });
+    for (const se of scheduleEmployees) {
+      await prisma.employee.update({ where: { id: se.id }, data: { workingScheduleId: standardSchedule.id } });
+    }
+  }
+  console.log("✅ Seeded Standard 9-6 schedule (40 hrs/wk) assigned to sample employees");
+
+  // Time Off Types — policy config (Annual, Sick, Comp Off)
+  const timeOffTypes = [
+    { name: "Paid Time Off", unit: "DAYS", requiresApproval: true, tracksBalance: true },
+    { name: "Sick Leave", unit: "DAYS", requiresApproval: true, tracksBalance: true },
+    { name: "Comp Off", unit: "HOURS", requiresApproval: true, tracksBalance: true },
+  ];
+  for (const t of timeOffTypes) {
+    const exists = await prisma.timeOffType.findFirst({ where: { name: t.name } });
+    if (!exists) await prisma.timeOffType.create({ data: t });
+  }
+  console.log("✅ Seeded 3 time off types (Paid Time Off, Sick Leave, Comp Off)");
 }
 
 main()

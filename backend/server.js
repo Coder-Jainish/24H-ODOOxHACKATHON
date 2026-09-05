@@ -54,6 +54,18 @@ const PERMISSIONS = [
   { method: "DELETE", path: "/api/contracts/:id", roles: [ROLES.ADM] },
   // Salary structures — minimal read-only for contract form picker (full CRUD in Phase 8)
   { method: "GET", path: "/api/salary-structures", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  // Working Schedules (API.md §3)
+  { method: "POST", path: "/api/schedules", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/schedules", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/schedules/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/schedules/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/schedules/:id", roles: [ROLES.ADM] },
+  // Time Off Types (API.md §5)
+  { method: "POST", path: "/api/time-off/types", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/time-off/types", roles: ["AUTH"] },
+  { method: "GET", path: "/api/time-off/types/:id", roles: ["AUTH"] },
+  { method: "PATCH", path: "/api/time-off/types/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/time-off/types/:id", roles: [ROLES.ADM] },
 ];
 
 // Exact-match helper: does this method+path match a permission entry?
@@ -593,6 +605,199 @@ app.delete("/api/contracts/:id", async (req, res) => {
       return res.status(400).json({ data: null, error: { code: "CANNOT_DELETE", message: "Contract is referenced by payslips" } });
     }
     await prisma.contract.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Working Schedule routes (API.md §3) ----------
+
+// Auto-compute total weekly hours from shift rows: sum of (end − start − break).
+function computeWeeklyHours(shifts) {
+  return shifts.reduce((total, s) => {
+    const [sh, sm] = s.startTime.split(":").map(Number);
+    const [eh, em] = s.endTime.split(":").map(Number);
+    let minutes = eh * 60 + em - (sh * 60 + sm) - (s.breakMinutes || 0);
+    if (minutes < 0) minutes = 0;
+    return total + minutes / 60;
+  }, 0);
+}
+
+// POST /api/schedules — create with nested shifts, totalWeeklyHours computed
+app.post("/api/schedules", async (req, res) => {
+  try {
+    const { name, shifts } = req.body;
+    const totalWeeklyHours = computeWeeklyHours(shifts || []);
+    const schedule = await prisma.workingSchedule.create({
+      data: {
+        name,
+        totalWeeklyHours,
+        shifts: {
+          create: (shifts || []).map((s) => ({
+            dayOfWeek: s.dayOfWeek,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            breakMinutes: s.breakMinutes || 0,
+          })),
+        },
+      },
+      include: { shifts: { orderBy: { dayOfWeek: "asc" } } },
+    });
+    return res.status(201).json({ data: schedule });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/schedules — list
+app.get("/api/schedules", async (_req, res) => {
+  try {
+    const schedules = await prisma.workingSchedule.findMany({
+      include: {
+        shifts: { orderBy: { dayOfWeek: "asc" } },
+        _count: { select: { employees: true } },
+      },
+      orderBy: { name: "asc" },
+    });
+    return res.json({ data: schedules });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/schedules/:id — detail (EMP allowed for their own assigned schedule)
+app.get("/api/schedules/:id", async (req, res) => {
+  try {
+    const schedule = await prisma.workingSchedule.findUnique({
+      where: { id: req.params.id },
+      include: {
+        shifts: { orderBy: { dayOfWeek: "asc" } },
+        employees: { select: { id: true, name: true } },
+      },
+    });
+    if (!schedule) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Schedule not found" } });
+    if (req.user.role === ROLES.EMP) {
+      const self = await prisma.employee.findUnique({ where: { id: req.user.employeeId } });
+      const mine = self && (self.workingScheduleId === schedule.id || schedule.employees.some((e) => e.id === self.id));
+      if (!mine) return res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
+    }
+    return res.json({ data: schedule });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/schedules/:id — update name/shifts, recomputes totalWeeklyHours
+app.patch("/api/schedules/:id", async (req, res) => {
+  try {
+    const { name, shifts } = req.body;
+    const data = {};
+    if (name) data.name = name;
+    if (shifts) {
+      data.totalWeeklyHours = computeWeeklyHours(shifts);
+      // Replace shift set: delete existing, re-create from payload.
+      await prisma.scheduleShift.deleteMany({ where: { workingScheduleId: req.params.id } });
+      await prisma.scheduleShift.createMany({
+        data: shifts.map((s) => ({
+          workingScheduleId: req.params.id,
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          breakMinutes: s.breakMinutes || 0,
+        })),
+      });
+    }
+    const schedule = await prisma.workingSchedule.update({
+      where: { id: req.params.id },
+      data,
+      include: { shifts: { orderBy: { dayOfWeek: "asc" } } },
+    });
+    return res.json({ data: schedule });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/schedules/:id — Admin only, blocked if assigned to any Employee/Contract
+app.delete("/api/schedules/:id", async (req, res) => {
+  try {
+    const assigned = await prisma.employee.count({ where: { workingScheduleId: req.params.id } });
+    const overridden = await prisma.contract.count({ where: { scheduleOverrideId: req.params.id } });
+    if (assigned + overridden > 0) {
+      return res.status(400).json({ data: null, error: { code: "CANNOT_DELETE", message: "Schedule is assigned to employees/contracts" } });
+    }
+    await prisma.scheduleShift.deleteMany({ where: { workingScheduleId: req.params.id } });
+    await prisma.workingSchedule.delete({ where: { id: req.params.id } });
+    return res.json({ data: { success: true } });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// ---------- Time Off Type routes (API.md §5) ----------
+
+// POST /api/time-off/types — create
+app.post("/api/time-off/types", async (req, res) => {
+  try {
+    const { name, unit, requiresApproval, tracksBalance } = req.body;
+    const type = await prisma.timeOffType.create({
+      data: { name, unit, requiresApproval: requiresApproval ?? true, tracksBalance: tracksBalance ?? true },
+    });
+    return res.status(201).json({ data: type });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// GET /api/time-off/types — list (all authenticated)
+app.get("/api/time-off/types", async (_req, res) => {
+  try {
+    const types = await prisma.timeOffType.findMany({ orderBy: { name: "asc" } });
+    return res.json({ data: types });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// GET /api/time-off/types/:id — detail
+app.get("/api/time-off/types/:id", async (req, res) => {
+  try {
+    const type = await prisma.timeOffType.findUnique({ where: { id: req.params.id } });
+    if (!type) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Time off type not found" } });
+    return res.json({ data: type });
+  } catch (e) {
+    return res.status(500).json({ data: null, error: { code: "SERVER_ERROR", message: e.message } });
+  }
+});
+
+// PATCH /api/time-off/types/:id — update
+app.patch("/api/time-off/types/:id", async (req, res) => {
+  try {
+    const { name, requiresApproval, tracksBalance } = req.body;
+    const type = await prisma.timeOffType.update({
+      where: { id: req.params.id },
+      data: {
+        ...(name && { name }),
+        ...(requiresApproval !== undefined && { requiresApproval }),
+        ...(tracksBalance !== undefined && { tracksBalance }),
+      },
+    });
+    return res.json({ data: type });
+  } catch (e) {
+    return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
+  }
+});
+
+// DELETE /api/time-off/types/:id — Admin only, blocked if referenced
+app.delete("/api/time-off/types/:id", async (req, res) => {
+  try {
+    const allocations = await prisma.timeOffAllocation.count({ where: { timeOffTypeId: req.params.id } });
+    const requests = await prisma.timeOffRequest.count({ where: { timeOffTypeId: req.params.id } });
+    if (allocations + requests > 0) {
+      return res.status(400).json({ data: null, error: { code: "CANNOT_DELETE", message: "Time off type is referenced by allocations/requests" } });
+    }
+    await prisma.timeOffType.delete({ where: { id: req.params.id } });
     return res.json({ data: { success: true } });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });

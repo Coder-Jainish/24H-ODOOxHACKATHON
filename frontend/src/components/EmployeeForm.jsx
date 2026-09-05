@@ -8,13 +8,16 @@ export default function EmployeeForm({ onClose, onSaved, employee }) {
     department: employee?.department || "",
     jobPosition: employee?.jobPosition || "",
     managerId: employee?.managerId || "",
+    workingScheduleId: employee?.workingScheduleId || "",
   });
   const [managers, setManagers] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const [busy, setBusy] = useState(false);
   const isEdit = !!employee;
 
   useEffect(() => {
     api("/employees").then((list) => setManagers(list.filter((e) => e.id !== employee?.id))).catch(() => {});
+    api("/schedules").then(setSchedules).catch(() => {});
   }, [employee]);
 
   function update(k, v) {
@@ -25,7 +28,7 @@ export default function EmployeeForm({ onClose, onSaved, employee }) {
     e.preventDefault();
     setBusy(true);
     try {
-      const payload = { ...form, managerId: form.managerId || null };
+      const payload = { ...form, managerId: form.managerId || null, workingScheduleId: form.workingScheduleId || null };
       if (isEdit) await api(`/employees/${employee.id}`, { method: "PATCH", body: payload });
       else await api("/employees", { method: "POST", body: payload });
       onSaved();
@@ -69,6 +72,17 @@ export default function EmployeeForm({ onClose, onSaved, employee }) {
               {managers.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Working Schedule
+            <select value={form.workingScheduleId} onChange={(e) => update("workingScheduleId", e.target.value)}>
+              <option value="">— None —</option>
+              {schedules.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.totalWeeklyHours} hrs/wk)
                 </option>
               ))}
             </select>

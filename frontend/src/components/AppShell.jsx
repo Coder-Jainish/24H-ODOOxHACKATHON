@@ -61,7 +61,7 @@ export default function AppShell({ children }) {
             OXP
           </span>
           {isHR && (
-            <Dropdown label="Employees" items={[{ to: "/employees", label: "Employees" }]} onNavigate={go} />
+            <Dropdown label="Employees" items={[{ to: "/employees", label: "Employees" }, { to: "/schedules", label: "Working Schedules" }]} onNavigate={go} />
           )}
           {isHR && (
             <Dropdown label="Contracts" items={[{ to: "/contracts", label: "Contracts" }]} onNavigate={go} />
