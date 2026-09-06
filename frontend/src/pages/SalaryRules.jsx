@@ -132,29 +132,38 @@ export default function SalaryRules() {
             <button className="btn" disabled={previewing} onClick={runPreview}>{previewing ? "Computing…" : "Compute"}</button>
           </div>
           {preview?.result && (
-            <table className="table compact">
-              <thead>
-                <tr><th>Line</th><th>Category</th><th>Amount</th></tr>
-              </thead>
-              <tbody>
-                {preview.result.lines.map((l, i) => (
-                  <tr key={i}>
-                    <td>{l.name} <span className="code-chip">{l.code}</span></td>
-                    <td>{l.category}</td>
-                    <td>₹{l.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+            <div className="preview-result">
+              <div className="preview-meta">
+                <strong>{preview.result.employee?.name || "Payslip"} — {preview.result.structure?.name}</strong>
+                <span className="muted small">Contract wage used: {preview.result.contract?.wage != null ? `₹${Number(preview.result.contract.wage).toLocaleString("en-IN")}` : "—"}</span>
+              </div>
+              <table className="table compact">
+                <thead>
+                  <tr><th>Rule (executed in sequence)</th><th>Category</th><th>Amount</th></tr>
+                </thead>
+                <tbody>
+                  {preview.result.lines.map((l, i) => (
+                    <tr key={i}>
+                      <td>
+                        <div>{l.name} <span className="code-chip">{l.code}</span></div>
+                        <div className="calc-explanation">{l.explanation}</div>
+                      </td>
+                      <td>{l.category}</td>
+                      <td>₹{l.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  ))}
+                  <tr className="preview-total">
+                    <td>Gross</td><td></td><td>₹{preview.result.gross.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                   </tr>
-                ))}
-                <tr className="preview-total">
-                  <td>Gross</td><td></td><td>₹{preview.result.gross.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                </tr>
-                <tr className="preview-total">
-                  <td>Deductions</td><td></td><td>₹{preview.result.deductions.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                </tr>
-                <tr className="preview-total">
-                  <td><strong>Net</strong></td><td></td><td><strong>₹{preview.result.totals.NET != null ? Number(preview.result.totals.NET).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</strong></td>
-                </tr>
-              </tbody>
-            </table>
+                  <tr className="preview-total">
+                    <td>Deductions</td><td></td><td>₹{preview.result.deductions.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                  <tr className="preview-total">
+                    <td><strong>Net</strong></td><td></td><td><strong>₹{preview.result.totals.NET != null ? Number(preview.result.totals.NET).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

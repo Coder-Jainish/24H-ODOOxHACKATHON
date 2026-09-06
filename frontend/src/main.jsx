@@ -5,7 +5,7 @@ import { AuthProvider } from "./lib/auth-context";
 import AppShell from "./components/AppShell";
 import RequireAuth from "./components/RequireAuth";
 import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
+import Home from "./pages/Home";
 import Placeholder from "./pages/Placeholder";
 import Employees from "./pages/Employees";
 import EmployeeDetail from "./pages/EmployeeDetail";
@@ -43,7 +43,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={<Shell><Dashboard /></Shell>} />
+          <Route path="/" element={<Shell><Home /></Shell>} />
           <Route path="/employees" element={<Shell roles={HR_ROLES}><Employees /></Shell>} />
           <Route path="/employees/:id" element={<Shell roles={HR_ROLES}><EmployeeDetail /></Shell>} />
           <Route path="/employees/:id/contracts" element={<Shell roles={HR_ROLES}><Contracts /></Shell>} />

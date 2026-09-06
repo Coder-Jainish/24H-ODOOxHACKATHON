@@ -1572,3 +1572,42 @@ label.emp-pick-row:hover {
   background: #5b7bd5;
   color: #fff;
 }
+
+/* ---------- Extra: reply cell + salary-rule formula explanations ---------- */
+.reply-cell {
+  max-width: 240px;
+  font-size: 0.84rem;
+  color: #444;
+}
+
+.reply-cell .small {
+  margin-top: 0.15rem;
+  font-size: 0.73rem;
+  color: #999;
+}
+
+.calc-explanation {
+  color: #767678;
+  font-size: 0.78rem;
+  margin-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-result {
+  margin-top: 1rem;
+}
+
+.preview-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.overlap-error {
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.84rem;
+}

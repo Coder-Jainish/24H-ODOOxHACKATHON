@@ -14,6 +14,7 @@ export default function Contracts() {
   const [employee, setEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   function load() {
     setLoading(true);
@@ -40,7 +41,7 @@ export default function Contracts() {
           )}
           <h1>Contracts{employee ? ` — ${employee.name}` : ""}</h1>
         </div>
-        <button className="btn" onClick={() => setShowForm(true)}>
+        <button className="btn" onClick={() => { setEditing(null); setShowForm(true); }}>
           NEW
         </button>
       </div>
@@ -57,6 +58,7 @@ export default function Contracts() {
               <th>End</th>
               <th>Wage / Month</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -77,12 +79,17 @@ export default function Contracts() {
                       {c.status === "ACTIVE" ? "Running" : c.status === "DRAFT" ? "Draft" : c.status}
                     </span>
                   </td>
+                  <td>
+                    <button className="btn btn-secondary btn-sm" onClick={() => { setEditing(c); setShowForm(true); }}>
+                      Edit
+                    </button>
+                  </td>
                 </tr>
               );
             })}
             {contracts.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted">
+                <td colSpan={7} className="muted">
                   No contracts found.
                 </td>
               </tr>
@@ -94,9 +101,11 @@ export default function Contracts() {
       {showForm && (
         <ContractForm
           employeeId={employeeId}
+          contract={editing}
           onClose={() => setShowForm(false)}
           onSaved={() => {
             setShowForm(false);
+            setEditing(null);
             load();
           }}
         />

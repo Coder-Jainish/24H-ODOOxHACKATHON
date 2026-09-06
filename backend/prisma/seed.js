@@ -312,6 +312,27 @@ async function main() {
   }
   console.log("✅ Seeded time off allocations (Aarav 24 PTO, Sara 20 PTO + 8 Sick, John 22 PTO, EMP demo 20 PTO)");
 
+  // Pending time-off request for the demo employee — lets HRM demo the new
+  // decision modal (approve/refuse with a reply note) right after seeding.
+  if (demoEmp && pto) {
+    const hasPending = await prisma.timeOffRequest.findFirst({
+      where: { employeeId: demoEmp.id, status: "PENDING" },
+    });
+    if (!hasPending) {
+      await prisma.timeOffRequest.create({
+        data: {
+          employeeId: demoEmp.id,
+          timeOffTypeId: pto.id,
+          startDate: new Date("2026-09-28"),
+          endDate: new Date("2026-09-30"),
+          reason: "Blocked leave — wedding in the family.",
+          status: "PENDING",
+        },
+      });
+      console.log("✅ Seeded a pending time-off request for the demo employee");
+    }
+  }
+
   // Pre-computed payrun (June 2026) so the Payruns list/dashboard have history.
   // Bootstrap data only — computed here once; live batches go through the runtime
   // POST /api/payruns/:id/compute route (which reuses computePayslip() from server.js).
@@ -1662,6 +1683,15 @@ async function main() {
               "Work from home request"
 
             ]),
+
+          responseNote:
+            status === "PENDING"
+              ? null
+              : (
+                  status === "APPROVED"
+                    ? "Approved by HR — enjoy your leave."
+                    : "Refused — not enough team coverage that week. Please pick different days."
+                ),
 
           status,
 

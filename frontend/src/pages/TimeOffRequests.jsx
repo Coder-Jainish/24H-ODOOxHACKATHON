@@ -15,6 +15,9 @@ export default function TimeOffRequests() {
   const [statusFilter, setStatusFilter] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  // Decision modal state: which request is being decided + for which action.
+  const [deciding, setDeciding] = useState(null);
+  const [replyNote, setReplyNote] = useState("");
 
   function load() {
     setLoading(true);
@@ -32,15 +35,22 @@ export default function TimeOffRequests() {
 
   useEffect(load, [statusFilter, isHR, user?.employeeId]);
 
-  async function decide(id, action) {
-    setBusyId(id);
+  // HR decision flows through a modal (replaces the old window.prompt) so a reply
+  // note is captured for approve as well as refuse, and shown back to the employee.
+  function openDecide(request, action) {
+    setDeciding({ request, action });
+    setReplyNote(request.responseNote || "");
+  }
+
+  async function submitDecision() {
+    const { request, action } = deciding;
+    setBusyId(request.id);
     try {
-      if (action === "approve") await api(`/time-off/requests/${id}/approve`, { method: "POST" });
-      else {
-        const reason = window.prompt("Reason for refusal:", "");
-        if (reason === null) return;
-        await api(`/time-off/requests/${id}/refuse`, { method: "POST", body: { reason } });
-      }
+      await api(`/time-off/requests/${request.id}/${action}`, {
+        method: "POST",
+        body: { responseNote: replyNote.trim() || null },
+      });
+      setDeciding(null);
       load();
     } catch (err) {
       alert(err.message);
@@ -112,6 +122,7 @@ export default function TimeOffRequests() {
               <th>Dates</th>
               <th>Reason</th>
               <th>Status</th>
+              <th>HR Reply</th>
               {isHR && <th></th>}
             </tr>
           </thead>
@@ -127,11 +138,25 @@ export default function TimeOffRequests() {
                     {STATUS_LABEL[r.status]}
                   </span>
                 </td>
+                <td className="muted reply-cell">
+                  {r.responseNote ? (
+                    <>
+                      <div>“{r.responseNote}”</div>
+                      <div className="small">
+                        {r.approvedBy?.email || r.approvedBy?.id?.slice(0, 8)} • {r.decidedAt ? new Date(r.decidedAt).toLocaleDateString() : ""}
+                      </div>
+                    </>
+                  ) : r.status === "PENDING" ? (
+                    "—"
+                  ) : (
+                    <span className="muted small">No reply note</span>
+                  )}
+                </td>
                 <td>
                   {isHR && r.status === "PENDING" && (
                     <span className="row-actions">
-                      <button className="btn btn-secondary btn-sm approve-btn" disabled={busyId === r.id} onClick={() => decide(r.id, "approve")}>Approve</button>
-                      <button className="btn btn-secondary btn-sm refuse-btn" disabled={busyId === r.id} onClick={() => decide(r.id, "refuse")}>Refuse</button>
+                      <button className="btn btn-secondary btn-sm approve-btn" disabled={busyId === r.id} onClick={() => openDecide(r, "approve")}>Approve</button>
+                      <button className="btn btn-secondary btn-sm refuse-btn" disabled={busyId === r.id} onClick={() => openDecide(r, "refuse")}>Refuse</button>
                     </span>
                   )}
                   {!isHR && r.status === "PENDING" && (
@@ -142,7 +167,7 @@ export default function TimeOffRequests() {
             ))}
             {requests.length === 0 && (
               <tr>
-                <td colSpan={isHR ? 6 : 5} className="muted">
+                <td colSpan={isHR ? 7 : 6} className="muted">
                   {isHR ? "No requests" : "You haven't requested any time off yet."}
                 </td>
               </tr>
@@ -160,6 +185,38 @@ export default function TimeOffRequests() {
             load();
           }}
         />
+      )}
+
+      {deciding && (
+        <div className="modal-backdrop" onClick={() => setDeciding(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{deciding.action === "approve" ? "Approve Request" : "Refuse Request"}</h3>
+              <button className="modal-close" onClick={() => setDeciding(null)}>×</button>
+            </div>
+            <p className="page-sub">
+              {deciding.request.employee?.name} · {deciding.request.timeOffType?.name} · {fmtDate(deciding.request.startDate)} → {fmtDate(deciding.request.endDate)}
+            </p>
+            {deciding.request.reason && (
+              <p className="card request-reason">“{deciding.request.reason}”</p>
+            )}
+            <label>
+              Reply to employee <span className="muted">(optional)</span>
+              <textarea
+                rows={3}
+                value={replyNote}
+                onChange={(e) => setReplyNote(e.target.value)}
+                placeholder={deciding.action === "approve" ? "e.g. Approved — enjoy your leave." : "e.g. Not enough coverage that week — please pick different days."}
+              />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={() => setDeciding(null)}>Cancel</button>
+              <button className={"btn " + (deciding.action === "approve" ? "approve-btn" : "refuse-btn")} disabled={busyId === deciding.request.id} onClick={submitDecision}>
+                {busyId === deciding.request.id ? "Saving…" : deciding.action === "approve" ? "Approve" : "Refuse"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

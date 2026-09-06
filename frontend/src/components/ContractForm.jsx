@@ -1,20 +1,24 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { useAuth } from "../lib/auth-context";
 
-export default function ContractForm({ employeeId, onClose, onSaved }) {
-  const { user } = useAuth();
+// Contract form used for BOTH create and edit (no missing fields in either mode):
+// create → all required fields present; edit → every existing value prefilled.
+export default function ContractForm({ employeeId, contract, onClose, onSaved }) {
+  const isEdit = !!contract;
   const [employees, setEmployees] = useState([]);
   const [structures, setStructures] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const [form, setForm] = useState({
-    employeeId: employeeId || "",
-    startDate: "",
-    endDate: "",
-    wage: "",
-    department: "",
-    position: "",
-    salaryStructureId: user?.role === "HR_PAYROLL_USER" ? "" : "",
-    status: "ACTIVE",
+    employeeId: contract?.employeeId || employeeId || "",
+    startDate: contract?.startDate ? toDateInput(contract.startDate) : "",
+    endDate: contract?.endDate ? toDateInput(contract.endDate) : "",
+    wage: contract?.wage != null ? Number(contract.wage) : "",
+    department: contract?.department || "",
+    position: contract?.position || "",
+    salaryStructureId: contract?.salaryStructureId || "",
+    scheduleOverrideId: contract?.scheduleOverrideId || "",
+    status: contract?.status || "ACTIVE",
+    excludeContractId: contract?.id || "",
   });
   const [overlapMsg, setOverlapMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,6 +26,7 @@ export default function ContractForm({ employeeId, onClose, onSaved }) {
   useEffect(() => {
     api("/employees").then((list) => setEmployees(list.filter((e) => e.isActive))).catch(() => {});
     api("/salary-structures").then(setStructures).catch(() => {});
+    api("/schedules").then(setSchedules).catch(() => {});
   }, []);
 
   // Pre-select this employee's department/position when chosen, to reduce typing.
@@ -41,6 +46,7 @@ export default function ContractForm({ employeeId, onClose, onSaved }) {
   }
 
   // Live pre-save overlap check — surfaced in the UI before submit (API.md §2).
+  // On edit the contract's own id is excluded so its own dates don't conflict.
   async function checkOverlap() {
     if (!form.employeeId || !form.startDate) return;
     try {
@@ -50,7 +56,7 @@ export default function ContractForm({ employeeId, onClose, onSaved }) {
           employeeId: form.employeeId,
           startDate: form.startDate,
           endDate: form.endDate || null,
-          excludeContractId: form.excludeContractId,
+          excludeContractId: form.excludeContractId || null,
         },
       });
       setOverlapMsg(res.overlap ? res.message : "");
@@ -63,8 +69,15 @@ export default function ContractForm({ employeeId, onClose, onSaved }) {
     e.preventDefault();
     setBusy(true);
     try {
-      const payload = { ...form, wage: Number(form.wage), endDate: form.endDate || null };
-      await api("/contracts", { method: "POST", body: payload });
+      const payload = {
+        ...form,
+        employeeId: form.employeeId,
+        wage: Number(form.wage),
+        endDate: form.endDate || null,
+        scheduleOverrideId: form.scheduleOverrideId || null,
+      };
+      if (isEdit) await api(`/contracts/${contract.id}`, { method: "PATCH", body: payload });
+      else await api("/contracts", { method: "POST", body: payload });
       onSaved();
     } catch (err) {
       setOverlapMsg(err.message);
@@ -77,13 +90,13 @@ export default function ContractForm({ employeeId, onClose, onSaved }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>New Contract</h3>
+          <h3>{isEdit ? "Edit Contract" : "New Contract"}</h3>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <form onSubmit={handleSubmit}>
           <label>
             Employee
-            <select value={form.employeeId} onChange={(e) => pickEmployee(e.target.value)} required disabled={!!employeeId}>
+            <select value={form.employeeId} onChange={(e) => pickEmployee(e.target.value)} required disabled={!!employeeId || isEdit}>
               <option value="">— Select employee —</option>
               {employees.map((emp) => (
                 <option key={emp.id} value={emp.id}>
@@ -128,6 +141,17 @@ export default function ContractForm({ employeeId, onClose, onSaved }) {
             </select>
           </label>
           <label>
+            Schedule Override <span className="muted">(optional — overrides the employee's working schedule)</span>
+            <select value={form.scheduleOverrideId} onChange={(e) => update("scheduleOverrideId", e.target.value)}>
+              <option value="">— None (use employee schedule) —</option>
+              {schedules.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.totalWeeklyHours} hrs/wk)
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Status
             <select value={form.status} onChange={(e) => update("status", e.target.value)}>
               <option value="ACTIVE">Active</option>
@@ -141,10 +165,17 @@ export default function ContractForm({ employeeId, onClose, onSaved }) {
 
           <div className="modal-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+            <button className="btn" disabled={busy}>{busy ? "Saving…" : isEdit ? "Save changes" : "Create"}</button>
           </div>
         </form>
       </div>
     </div>
   );
+}
+
+// "2026-01-01T00:00:00.000Z" → "2026-01-01" (UTC-safe, avoids timezone day shift).
+function toDateInput(d) {
+  if (!d) return "";
+  const dt = new Date(d);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
 }

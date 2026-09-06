@@ -9,6 +9,7 @@ export default function Allocations() {
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [filters, setFilters] = useState({ employeeId: "", timeOffTypeId: "" });
 
   function load() {
@@ -33,7 +34,7 @@ export default function Allocations() {
     <div>
       <div className="page-header">
         <h1>Time Off Allocations</h1>
-        <button className="btn" onClick={() => setShowForm(true)}>NEW</button>
+        <button className="btn" onClick={() => { setEditing(null); setShowForm(true); }}>NEW</button>
       </div>
       <p className="page-sub">
         Grant yearly leave balances to employees (e.g. 20 PTO days for the year). These balances are what employees spend time off against — separate from their individual day-off requests.
@@ -66,13 +67,14 @@ export default function Allocations() {
               <th>Remaining</th>
               <th>Validity</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            <AllocRows allocations={allocations} />
+            <AllocRows allocations={allocations} onEdit={(a) => { setEditing(a); setShowForm(true); }} />
             {allocations.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted">No allocations yet.</td>
+                <td colSpan={7} className="muted">No allocations yet.</td>
               </tr>
             )}
           </tbody>
@@ -81,9 +83,14 @@ export default function Allocations() {
 
       {showForm && (
         <AllocationForm
-          onClose={() => setShowForm(false)}
+          allocation={editing}
+          onClose={() => {
+            setShowForm(false);
+            setEditing(null);
+          }}
           onSaved={() => {
             setShowForm(false);
+            setEditing(null);
             load();
           }}
         />

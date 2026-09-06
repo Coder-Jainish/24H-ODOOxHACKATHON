@@ -7,7 +7,9 @@ export function fmtDate(d) {
 }
 
 // Reusable allocation table row renderer shared by global + employee pages.
-export function AllocRows({ allocations }) {
+// When `onEdit` is provided, each row gets an Edit action that opens the
+// AllocationForm in edit mode (all fields prefilled — quota, validity, approval).
+export function AllocRows({ allocations, onEdit }) {
   return allocations.map((a) => (
     <tr key={a.id}>
       <td>{a.employee?.name || "—"}</td>
@@ -26,6 +28,11 @@ export function AllocRows({ allocations }) {
           <span className="status-pill amber">Pending OK</span>
         )}
       </td>
+      {onEdit && (
+        <td>
+          <button className="btn btn-secondary btn-sm" onClick={() => onEdit(a)}>Edit</button>
+        </td>
+      )}
     </tr>
   ));
 }

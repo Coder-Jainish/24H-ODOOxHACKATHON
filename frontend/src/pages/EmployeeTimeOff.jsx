@@ -10,6 +10,7 @@ export default function EmployeeTimeOff() {
   const [emp, setEmp] = useState(null);
   const [data, setData] = useState({ allocations: [], requests: [] });
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [loading, setLoading] = useState(true);
 
   function load() {
@@ -36,7 +37,7 @@ export default function EmployeeTimeOff() {
       <div className="page-header">
         <button className="btn btn-secondary" onClick={() => navigate(`/employees/${id}`)}>← Back</button>
         <h1>{emp.name} · Time Off</h1>
-        <button className="btn" onClick={() => setShowForm(true)}>ALLOCATE LEAVE</button>
+        <button className="btn" onClick={() => { setEditing(null); setShowForm(true); }}>ALLOCATE LEAVE</button>
       </div>
       <p className="page-sub">Balances are the yearly leave they've been granted; requests are the individual days they want off.</p>
 
@@ -53,6 +54,7 @@ export default function EmployeeTimeOff() {
                 <th>Remaining</th>
                 <th>Validity</th>
                 <th>Status</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -68,6 +70,9 @@ export default function EmployeeTimeOff() {
                     ) : (
                       <span className="status-pill amber">Pending OK</span>
                     )}
+                  </td>
+                  <td>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setEditing(a)}>Edit</button>
                   </td>
                 </tr>
               ))}
@@ -87,6 +92,7 @@ export default function EmployeeTimeOff() {
                 <th>Type</th>
                 <th>Dates</th>
                 <th>Status</th>
+                <th>HR Reply</th>
               </tr>
             </thead>
             <tbody>
@@ -95,6 +101,14 @@ export default function EmployeeTimeOff() {
                   <td>{r.timeOffType?.name}</td>
                   <td>{fmtDate(r.startDate)} → {fmtDate(r.endDate)}</td>
                   <td><span className={"badge " + (r.status === "APPROVED" ? "badge-active" : r.status === "REFUSED" ? "badge-inactive" : "")}>{r.status}</span></td>
+                  <td className="muted reply-cell">
+                    {r.responseNote ? (
+                      <>
+                        <div>“{r.responseNote}”</div>
+                        <div className="small">{r.decidedAt ? new Date(r.decidedAt).toLocaleDateString() : ""}</div>
+                      </>
+                    ) : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -105,9 +119,14 @@ export default function EmployeeTimeOff() {
       {showForm && (
         <AllocationForm
           employee={emp}
-          onClose={() => setShowForm(false)}
+          allocation={editing}
+          onClose={() => {
+            setShowForm(false);
+            setEditing(null);
+          }}
           onSaved={() => {
             setShowForm(false);
+            setEditing(null);
             load();
           }}
         />

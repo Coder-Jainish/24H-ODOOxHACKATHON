@@ -347,12 +347,18 @@ app.get("/api/employees", async (req, res) => {
   }
 });
 
-// GET /api/employees/me — employee self profile (must be before :id)
+// GET /api/employees/me — employee self profile (must be before :id).
+// Includes their own working schedule + shifts + related counts so the employee
+// home page is a single round-trip (self-service landing for the EMP role).
 app.get("/api/employees/me", async (req, res) => {
   try {
     const employee = await prisma.employee.findUnique({
       where: { id: req.user.employeeId },
-      include: { manager: { select: { id: true, name: true } } },
+      include: {
+        manager: { select: { id: true, name: true } },
+        workingSchedule: { include: { shifts: true } },
+        _count: { select: { contracts: true, attendances: true, requests: true, allocations: true } },
+      },
     });
     if (!employee) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Employee not found" } });
     return res.json({ data: employee });
@@ -669,7 +675,7 @@ app.post("/api/contracts", async (req, res) => {
         department,
         position,
         salaryStructureId,
-        scheduleOverrideId,
+        scheduleOverrideId: scheduleOverrideId || null,
         status: status || "ACTIVE",
       },
       include: { employee: { select: { id: true, name: true } }, salaryStructure: true },
@@ -692,6 +698,7 @@ app.get("/api/contracts", async (req, res) => {
       include: {
         employee: { select: { id: true, name: true } },
         salaryStructure: { select: { id: true, name: true } },
+        scheduleOverride: true,
       },
       orderBy: [{ employeeId: "asc" }, { startDate: "desc" }],
     });
@@ -757,7 +764,7 @@ app.patch("/api/contracts/:id", async (req, res) => {
     const existing = await prisma.contract.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Contract not found" } });
 
-    const { startDate, endDate, wage, department, position, salaryStructureId, status } = req.body;
+    const { startDate, endDate, wage, department, position, salaryStructureId, scheduleOverrideId, status } = req.body;
     const newStart = startDate ? new Date(startDate) : existing.startDate;
     const newEnd = endDate !== undefined ? (endDate ? new Date(endDate) : null) : existing.endDate;
 
@@ -780,6 +787,7 @@ app.patch("/api/contracts/:id", async (req, res) => {
         ...(department && { department }),
         ...(position && { position }),
         ...(salaryStructureId && { salaryStructureId }),
+        ...(scheduleOverrideId !== undefined && { scheduleOverrideId: scheduleOverrideId || null }),
         ...(status && { status }),
       },
       include: { employee: { select: { id: true, name: true } }, salaryStructure: true },
@@ -1195,13 +1203,17 @@ app.delete("/api/time-off/requests/:id", async (req, res) => {
   }
 });
 
-// POST /api/time-off/requests/:id/approve — HRM/ADM atomically decrements remaining balance
+// POST /api/time-off/requests/:id/approve — HRM/ADM atomically decrements remaining balance.
+// Accepts an optional `responseNote` reply from HR that is stored on the request
+// and shown back to the employee (request.reason stays untouched — employee input).
 app.post("/api/time-off/requests/:id/approve", async (req, res) => {
   try {
     const request = await prisma.timeOffRequest.findUnique({ where: { id: req.params.id }, include: { timeOffType: true } });
     if (!request) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Request not found" } });
     if (request.status !== "PENDING") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only pending requests can be approved" } });
 
+    const { responseNote } = req.body;
+    const decided = { status: "APPROVED", approvedById: req.user.userId, decidedAt: new Date(), ...(responseNote !== undefined ? { responseNote: responseNote || null } : {}) };
     const duration = requestDurationInUnit(request.startDate, request.endDate, request.timeOffType);
 
     if (request.timeOffType.tracksBalance) {
@@ -1225,7 +1237,7 @@ app.post("/api/time-off/requests/:id/approve", async (req, res) => {
         });
         const updatedRequest = await tx.timeOffRequest.update({
           where: { id: request.id },
-          data: { status: "APPROVED", approvedById: req.user.userId, decidedAt: new Date() },
+          data: decided,
           include: reqInclude,
         });
         return { updatedRequest, updatedAllocation };
@@ -1236,7 +1248,7 @@ app.post("/api/time-off/requests/:id/approve", async (req, res) => {
     // Non-balance type (e.g. unpaid): approve without touching allocations
     const updatedRequest = await prisma.timeOffRequest.update({
       where: { id: request.id },
-      data: { status: "APPROVED", approvedById: req.user.userId, decidedAt: new Date() },
+      data: decided,
       include: reqInclude,
     });
     return res.json({ data: { updatedRequest, updatedAllocation: null } });
@@ -1248,16 +1260,18 @@ app.post("/api/time-off/requests/:id/approve", async (req, res) => {
   }
 });
 
-// POST /api/time-off/requests/:id/refuse — HRM/ADM, no balance change
+// POST /api/time-off/requests/:id/refuse — HRM/ADM, no balance change.
+// The HR reply goes into `responseNote` (shown back to the employee later). The
+// employee's original request `reason` is preserved, not overwritten anymore.
 app.post("/api/time-off/requests/:id/refuse", async (req, res) => {
   try {
     const request = await prisma.timeOffRequest.findUnique({ where: { id: req.params.id } });
     if (!request) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Request not found" } });
     if (request.status !== "PENDING") return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Only pending requests can be refused" } });
-    const { reason } = req.body;
+    const { responseNote } = req.body;
     const updatedRequest = await prisma.timeOffRequest.update({
       where: { id: request.id },
-      data: { status: "REFUSED", reason: reason || request.reason || null, approvedById: req.user.userId, decidedAt: new Date() },
+      data: { status: "REFUSED", ...(responseNote !== undefined ? { responseNote: responseNote || null } : {}), approvedById: req.user.userId, decidedAt: new Date() },
       include: reqInclude,
     });
     return res.json({ data: { updatedRequest, updatedAllocation: null } });
@@ -1321,20 +1335,26 @@ function evaluateFormula(formula, amounts) {
 
 // computePayslip(): pure deterministic rule engine (TASKS.md Step 8 guardrail — reused by the Payrun engine).
 // Runs rules in ascending sequence, memoizing by code so later rules can reference earlier ones.
+// Each line also carries an `explanation` string so formula execution is visible in the UI (preview).
 function computePayslip(rules, { wage = 0 } = {}) {
   const amounts = {};
   const lines = [];
+  const fmt = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
   for (const rule of [...rules].sort((a, b) => a.sequence - b.sequence)) {
     let amount = 0;
+    let explanation = "";
     switch (rule.calculationType) {
       case "FIXED":
         amount = rule.value != null ? Number(rule.value) : Number(wage) || 0;
+        explanation = rule.value != null ? `Fixed amount ${fmt(amount)}` : `Taken from contract wage ${fmt(amount)}`;
         break;
       case "PERCENTAGE":
         amount = (amounts[rule.baseRuleCode] ?? 0) * (Number(rule.value) || 0) / 100;
+        explanation = `${rule.value}% of ${rule.baseRuleCode} (${fmt(amounts[rule.baseRuleCode] ?? 0)}) = ${fmt(amount)}`;
         break;
       case "FORMULA":
         amount = evaluateFormula(rule.formula, amounts);
+        explanation = `${rule.formula || "—"} = ${fmt(amount)}`;
         break;
       default:
         amount = 0;
@@ -1347,6 +1367,7 @@ function computePayslip(rules, { wage = 0 } = {}) {
       name: rule.name,
       code: rule.code,
       amount,
+      explanation,
     });
   }
   return { lines, amounts };
@@ -1460,10 +1481,11 @@ app.post("/api/salary-rules/preview", async (req, res) => {
     if (!structure) return res.status(404).json({ data: null, error: { code: "NOT_FOUND", message: "Structure not found" } });
     const contract = await getActiveContract(employeeId, periodStart ? new Date(periodStart) : new Date());
     if (!contract) return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: "Employee has no active contract" } });
+    const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, name: true } });
     const { lines, amounts } = computePayslip(structure.rules, { wage: Number(contract.wage) });
     const gross = lines.filter((l) => l.category === "ALLOWANCE" || l.category === "BASIC").reduce((s, l) => s + l.amount, 0);
     const deductions = lines.filter((l) => l.category === "DEDUCTION").reduce((s, l) => s + l.amount, 0);
-    return res.json({ data: { structure: { id: structure.id, name: structure.name }, employee: { id: contract.employeeId }, contract: { id: contract.id, wage: Number(contract.wage) }, lines, gross, deductions, totals: amounts } });
+    return res.json({ data: { structure: { id: structure.id, name: structure.name }, employee: { id: contract.employeeId, name: employee?.name || null }, contract: { id: contract.id, wage: Number(contract.wage) }, lines, gross, deductions, totals: amounts } });
   } catch (e) {
     return res.status(400).json({ data: null, error: { code: "BAD_REQUEST", message: e.message } });
   }
