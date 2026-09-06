@@ -507,6 +507,14 @@ app.post("/api/attendance/check-in", async (req, res) => {
     if (open) {
       return res.status(409).json({ data: null, error: { code: "ALREADY_CHECKED_IN", message: "You already have an open attendance record" } });
     }
+    // Once-per-day: a role may only check in once per calendar day (after that
+    // day is completed it can NOT clock in again until tomorrow).
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const todayRecord = await prisma.attendance.findFirst({ where: { employeeId: req.user.employeeId, checkIn: { gte: startOfDay } } });
+    if (todayRecord) {
+      return res.status(409).json({ data: null, error: { code: "ALREADY_CHECKED_IN", message: "You already checked in today" } });
+    }
     const employee = await prisma.employee.findUnique({
       where: { id: req.user.employeeId },
       include: { workingSchedule: { include: { shifts: true } } },

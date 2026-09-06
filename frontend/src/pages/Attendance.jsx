@@ -29,6 +29,7 @@ export default function Attendance() {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null);
   const [openRecord, setOpenRecord] = useState(null);
+  const [todayDone, setTodayDone] = useState(false);
 
   function load() {
     setLoading(true);
@@ -39,11 +40,17 @@ export default function Attendance() {
     request.then(setRecords).catch((e) => alert(e.message)).finally(() => setLoading(false));
   }
 
-  // Resolve the caller's OWN open record so any role can clock in/out.
+  // Resolve the caller's OWN day state so any role can clock in/out — and only once per day.
   useEffect(() => {
     api(`/employees/${user.employeeId}/attendance`)
-      .then((mine) => setOpenRecord(mine.find((record) => !record.checkOut) || null))
-      .catch(() => setOpenRecord(null));
+      .then((mine) => {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        const todays = mine.filter((record) => new Date(record.checkIn) >= startOfDay);
+        setOpenRecord(todays.find((record) => !record.checkOut) || null);
+        setTodayDone(todays.length > 0 && todays.every((record) => record.checkOut));
+      })
+      .catch(() => { setOpenRecord(null); setTodayDone(false); });
   }, [user.employeeId]);
 
   useEffect(() => {
@@ -58,9 +65,11 @@ export default function Attendance() {
       if (openRecord) {
         await api(`/attendance/${openRecord.id}/check-out`, { method: "POST" });
         setOpenRecord(null);
+        setTodayDone(true);
       } else {
         const record = await api("/attendance/check-in", { method: "POST" });
         setOpenRecord(record);
+        setTodayDone(false);
       }
       load();
     } catch (e) {
@@ -92,7 +101,9 @@ export default function Attendance() {
     <div>
       <div className="page-header">
         <h1>{id ? "Employee Attendance" : isReviewer ? "Attendance" : "My Attendance"}</h1>
-        {!id && <button className="btn" disabled={busy} onClick={toggleClock}>{openRecord ? "CHECK OUT" : "CHECK IN"}</button>}
+        {!id && <button className="btn" disabled={busy || (todayDone && !openRecord)} onClick={toggleClock}>
+          {openRecord ? "CHECK OUT" : todayDone ? "DONE TODAY" : "CHECK IN"}
+        </button>}
       </div>
       <p className="page-sub">{isReviewer ? "Review worked hours and correct attendance records when needed." : "Record your working time and keep track of completed days."}</p>
       {isReviewer && !id && (
