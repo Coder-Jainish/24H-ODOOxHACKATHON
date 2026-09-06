@@ -1,69 +1,189 @@
-# PeoplePay360 — Integrated HR & Payroll Platform
+# PeoplePay360 🧾⚡
 
-## 1. Project Name
-**PeoplePay360** — Unified HR & Payroll Operations System
+**Unified HR & Payroll Operations Platform**
 
----
-
-## 2. Objective
-Eliminate disconnected HR silos by establishing the **Employee Master Record** as the central operational hub, connecting contracts, schedules, attendance, and leave directly into an automated, rule-based payrun and payslip computation engine.
+> One source of truth (the Employee) → connected to Contracts, Schedules, Attendance & Leave → feeding a rule-based Payroll Engine → producing validated payslips & a live dashboard.
 
 ---
 
-## 3. Main Features
+## 🎯 The Problem
 
-### Feature 1: Unified HR & Time Operations (80% Daily Core)
-Centralized employee lifecycle management connecting historical contracts and weekly working schedules with daily attendance tracking (check-in/out) and a time-off approval workflow that automatically deducts from employee allocation balances.
+Most HR tools treat employees, attendance, leave, contracts, and payroll as **disconnected silos**:
 
-### Feature 2: Rule-Based Payrun & Payslip Engine (20% MVP Differentiator)
-A 2-step payrun wizard that automatically identifies period-active contracts, executes sequenced salary calculation rules (Basic $\rightarrow$ Allowances $\rightarrow$ Deductions $\rightarrow$ Net), highlights pre-validation warnings, generates itemized PDF payslips, and feeds real-time metrics to an executive dashboard.
+| Silo Problem | Real-World Consequence |
+|---|---|
+| Overlapping/stale contracts | Wrong wage picked up during payroll |
+| Attendance ≠ Leave records | Worked hours & balances don't match reality |
+| Rigid payroll scripts | Can't add a new allowance/deduction without code changes |
 
----
-
-## 4. Tech Stack
-
-- **Frontend:** Next.js / React, TypeScript, Tailwind CSS, Lucide Icons
-- **Backend:** Node.js (Express)
-- **Database & ORM:** SQLite with Prisma ORM
-- **Document Engine:** Headless PDF generator for printable payslips
-- **Authentication:** Role-Based Access Control (RBAC) with 5 distinct roles
+**PeoplePay360 fixes this** by making the **Employee Master Record** the hub everything else plugs into.
 
 ---
 
-## 5. Target Users
+## 🧩 What It Does (Feature Summary)
 
-| Role | Primary Purpose |
-| :--- | :--- |
-| **Employee** | View profile, clock attendance, check leave balances, and submit time-off requests |
-| **HR Manager** | Manage employee profiles, contracts, schedules, and approve/refuse leave |
-| **HR Payroll User** | Execute payruns, review payslips, and inspect calculation breakdowns |
-| **HR Payroll Manager** | Full authority over payruns, payslips, salary structures, and sequenced rules |
-| **Admin** | System configuration, user provisioning, and role permission management |
+### 🟦 80% — Daily HR Core
+Employee profiles ⇄ Contracts ⇄ Schedules ⇄ Attendance ⇄ Time-Off, with **leave approval auto-deducting balances** in real time.
+
+### 🟩 20% — The Differentiator
+A **sequenced Salary Rules Engine** (`Basic → Allowance → Gross → Deduction → Net`) driving a 2-step Payrun Wizard that computes, validates, locks, and PDFs payslips — plus a **live dashboard** with zero hardcoded numbers.
 
 ---
 
-## 6. Setup Requirements
+## 🔁 How Everything Connects (System Flow)
 
-### Current Setup (Hackathon MVP)
-1. **Runtime:** Node.js (v18+)
-2. **Database:** SQLite
-3. **Configuration:** `.env` file for database connection and auth secret keys
-4. **Data Seeding:** Run seed script to populate demo employees, contracts, schedules, and leave types
+```
+                         ┌────────────────────┐
+                         │   EMPLOYEE MASTER  │  ← single source of truth
+                         └──────────┬─────────┘
+           ┌───────────┬────────────┼────────────┬───────────────┐
+           ▼           ▼            ▼            ▼               ▼
+      [Contract]  [Schedule]  [Attendance]  [Time-Off Alloc] [Time-Off Req]
+        1 active     1:1        check-in/     quota per          → Approve →
+        per period   pattern    out → hrs      leave type        decrements
+           │                                                     allocation
+           ▼
+     [Salary Structure] ──▶ [Salary Rules, ordered by Sequence]
+           │
+           ▼
+     ┌─────────────────────────── PAYRUN BATCH ───────────────────────────┐
+     │  Draft → Compute → (resolve active contract per employee)          │
+     │        → run rules in sequence → Computed                          │
+     │        → flag warnings (missing bank, dup payslip, unapproved lv)  │
+     │        → Validate → Mark Paid (🔒 locked) → Send (PDF + email)     │
+     └──────────────────────────┬─────────────────────────────────────────┘
+                                 ▼
+                            [Payslip + Lines]
+                                 │
+                                 ▼
+                       📊 LIVE DASHBOARD (KPIs, trends, alerts)
+```
 
-### Future Setup (Production)
-- SMTP service for automated payslip email delivery
-- Redis / BullMQ for background payroll processing queues
-- S3-compatible cloud storage for archived PDF payslips
+**End-to-end demo path:**
+```
+Create Employee → Assign Schedule + Contract
+   -> Log Attendance / Request & Approve Leave (balance auto-deducts)
+   -> Launch Payrun Wizard (period + structure + employees)
+   -> Compute -> Review rule-by-rule breakdown -> Resolve warnings
+   -> Validate -> Mark Paid -> Download PDF / Send
+   -> Dashboard updates instantly
+```
 
 ---
 
-## 7. Priority Matrix
+## 🛠️ Tech Stack
 
-- **P0 (Must Have):** Employee Master, Period-Active Contract selection, Leave Request $\rightarrow$ Approval $\rightarrow$ Deduction, Sequenced Salary Rules, 2-Step Payrun Wizard, Payslip Breakdown, Role Login.
-- **P1 (Should Have):** Attendance check-in/out, Automatic weekly hours calculation, PDF payslip export, Validation warnings, Live Dashboard KPIs & charts.
-- **P2 (Nice to Have):** Bulk payslip email delivery, complex formula builder, employee Kanban view.
+| Layer | Choice | Why |
+|---|---|---|
+| **Frontend** | Next.js / React + TypeScript + Tailwind CSS + Lucide Icons | Fast to build, typed, responsive out of the box |
+| **Backend** | Node.js (Express) | Simple REST layer, same language as frontend |
+| **Database** | SQLite
+| **ORM** | Prisma ORM
+| **Auth** | JWT/session-based, 5-role RBAC
+| **PDF** | Headless PDF generator (e.g. Puppeteer / `pdf-lib`) | Printable itemized payslips |
+
+> Recommended add-ons if time allows: **Redis/BullMQ** (background payrun jobs), **shadcn/ui** (fast polished components), **Recharts** (dashboard charts).
 
 ---
 
-## 8. Development Tasks
-Detailed step-by-step task breakdown and execution checklist can be found in **[TASKS.md](./TASKS.md)**.
+## 👥 Roles & Access (RBAC)
+
+| Role | Can Do |
+|---|---|
+| **Employee (EMP)** | View own profile/schedule/attendance/balance, check-in/out, request leave |
+| **HR Manager (HRM)** | Full CRUD: Employees, Contracts, Schedules, Attendance, Time-Off + Approve/Refuse. ❌ No payroll access |
+| **HR Payroll User (HPU)** | Inherits HRM + Create/Read/Update Payruns & Payslips. Read-only Salary Rules |
+| **HR Payroll Manager (HPM)** | Full CRUD over Payruns, Payslips, Salary Structures & Rules |
+| **Admin (ADM)** | Unrestricted — including user/role provisioning |
+
+🔒 Every rule above is enforced at the **API layer**, not just hidden in the UI — see `API.md`'s RBAC matrix.
+
+---
+
+## 🗂️ Data Model (Quick View)
+
+```
+Employee ─1:N─ Contract ─N:1─ SalaryStructure ─1:N─ SalaryRule
+   │─1:1─ WorkingSchedule
+   │─1:N─ Attendance
+   │─1:N─ TimeOffAllocation ─N:1─ TimeOffType
+   └─1:N─ TimeOffRequest ──▶ (on approve) decrements Allocation
+
+PayrunBatch ─1:N─ Payslip ─1:N─ PayslipLine ─N:1─ SalaryRule
+```
+
+Full schema (Prisma models, constraints, enums) → **[`DATABASE.md`](./DATABASE.md)**
+Full endpoint reference (roles, request/response shapes) → **[`API.md`](./API.md)**
+
+---
+
+## 🚀 Getting Started
+
+```bash
+# 1. Clone & install
+git clone <repo-url> peoplepay360
+cd peoplepay360
+npm install
+
+# 2. Configure environment
+cp .env.example .env
+# → set DATABASE_URL, JWT_SECRET
+
+# 3. Set up the database
+npx prisma migrate dev
+npx prisma db seed        # loads demo employees, contracts, schedules, leave types
+
+# 4. Run it
+npm run dev                # frontend + API
+```
+
+**Requirements:** Node.js v18+, SQLite
+
+---
+
+## ✅ Definition of Done (Success Criteria)
+
+- [ ] Full payrun run: create batch → compute → inspect breakdown → resolve warnings → validate → mark paid → export, with **zero manual DB edits**
+- [ ] Payroll always picks the **period-active contract** (overlaps blocked)
+- [ ] Approving leave **instantly deducts** the balance
+- [ ] Dashboard is **100% live-queried**, no static numbers
+- [ ] RBAC visibly restricts actions across ≥3 roles in the live demo
+
+---
+
+## 📌 Priority Matrix
+
+| Priority | Includes |
+|---|---|
+| **P0 — Must Demo** | Employee Master, period-active Contract logic, Time-Off request→approve→deduct, Salary Rules (Fixed/%), 2-Step Payrun Wizard + Compute, Payslip breakdown, RBAC login |
+| **P1 — Should Have** | Attendance check-in/out, auto weekly-hours calc, Payslip PDF export, validation warnings, live Dashboard (KPIs + charts) |
+| **P2 — Stretch** | Bulk email dispatch, formula-based rules, Employee Kanban, full 5-role test coverage |
+
+---
+
+## 🎬 Live Demo Script (5 min)
+
+1. **Employee → Paid Payslip** (3 min): Open employee → jump to Contract/Schedule via smart nav → run Payrun Wizard → Compute → review rule breakdown → Validate → Mark Paid → download PDF.
+2. **Leave Lifecycle** (1.5 min): Check balance → submit request as Employee → switch to HR Manager → Approve → balance updates live.
+3. **Dashboard** (0.5 min): Show KPIs/department chart/attendance status update instantly after the above actions.
+
+---
+
+## ⚠️ Known Risks & Mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Overlapping contracts break payroll | DB + service-layer overlap validation on save |
+| Rule dependency cycles | Strictly ascending `sequence`, enforced on write |
+| PDF/email delays demo | Headless/browser-print PDF; email dispatch simulated |
+| Dashboard shows stale/mock data | Aggregate queries hit live tables from hour 1 |
+
+---
+
+## 🚧 Out of Scope (Post-Hackathon)
+
+Country-specific tax packs · Multi-company/currency · Real banking rails (simulated via *Mark Paid*) · Biometric hardware (simulated via web check-in) · Email Integration
+
+<div align="center">
+  <sub>Thank you Odoo this Creative Hackathon ❤️</sub>
+</div>
