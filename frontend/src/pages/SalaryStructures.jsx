@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth-context";
 
 export default function SalaryStructures() {
+  const { user } = useAuth();
+  const canManage = ["HR_PAYROLL_MANAGER", "ADMIN"].includes(user?.role);
   const [structures, setStructures] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -28,7 +31,9 @@ export default function SalaryStructures() {
     <div>
       <div className="page-header">
         <h1>Salary Structures</h1>
-        <button className="btn" onClick={() => { setEditing(null); setShowForm(true); }}>NEW</button>
+        {canManage && (
+          <button className="btn" onClick={() => { setEditing(null); setShowForm(true); }}>NEW</button>
+        )}
       </div>
       <p className="page-sub">Structures group the salary rules that make up a payslip (e.g. Basic, HRA, deductions, Net). Contracts reference a structure to compute pay.</p>
 
@@ -50,12 +55,12 @@ export default function SalaryStructures() {
                 <td>{s.name}</td>
                 <td><span className="status-pill">{s._count.rules} rules</span></td>
                 <td className="muted">{s._count.contracts}</td>
-                <td>
+                <td>{canManage && (
                   <span className="row-actions">
                     <button className="btn btn-secondary btn-sm" onClick={() => { setEditing(s); setShowForm(true); }}>Edit</button>
                     <button className="btn btn-secondary btn-sm refuse-btn" onClick={() => del(s)}>Delete</button>
                   </span>
-                </td>
+                )}</td>
               </tr>
             ))}
             {structures.length === 0 && (

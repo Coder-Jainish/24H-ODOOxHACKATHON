@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth-context";
 
 const CATS = ["BASIC", "ALLOWANCE", "GROSS", "DEDUCTION", "NET"];
 const CALC_TYPES = ["FIXED", "PERCENTAGE", "FORMULA"];
 
 export default function SalaryRules() {
+  const { user } = useAuth();
+  const canManage = ["HR_PAYROLL_MANAGER", "ADMIN"].includes(user?.role);
   const [structures, setStructures] = useState([]);
   const [structureId, setStructureId] = useState("");
   const [rules, setRules] = useState([]);
@@ -56,7 +59,9 @@ export default function SalaryRules() {
     <div>
       <div className="page-header">
         <h1>Salary Rules</h1>
-        <button className="btn" onClick={() => { setEditing(null); setShowForm(true); }}>NEW</button>
+        {canManage && (
+          <button className="btn" onClick={() => { setEditing(null); setShowForm(true); }}>NEW</button>
+        )}
       </div>
       <p className="page-sub">Rules define each payslip line. They run in sequence order — later rules can reference earlier ones by code (e.g. a FIXED Basic, then HRA as a % of it, a deduction, and a Net formula).</p>
 
@@ -97,10 +102,12 @@ export default function SalaryRules() {
                 </td>
                 <td>{r.calculationType === "FIXED" ? `₹${Number(r.value).toLocaleString()}` : "—"}</td>
                 <td>
-                  <span className="row-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={() => { setEditing(r); setShowForm(true); }}>Edit</button>
-                    <button className="btn btn-secondary btn-sm refuse-btn" onClick={() => del(r)}>Delete</button>
-                  </span>
+                  {canManage && (
+                    <span className="row-actions">
+                      <button className="btn btn-secondary btn-sm" onClick={() => { setEditing(r); setShowForm(true); }}>Edit</button>
+                      <button className="btn btn-secondary btn-sm refuse-btn" onClick={() => del(r)}>Delete</button>
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -113,7 +120,7 @@ export default function SalaryRules() {
         </table>
       )}
 
-      {structureId && (
+      {canManage && structureId && (
         <div className="card preview-card">
           <h3>Preview Payslip</h3>
           <div className="preview-controls">

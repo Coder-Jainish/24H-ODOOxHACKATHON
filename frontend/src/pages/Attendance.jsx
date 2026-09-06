@@ -18,7 +18,8 @@ function formatDate(value) {
 export default function Attendance() {
   const { id } = useParams();
   const { user } = useAuth();
-  const isHR = user.role !== "EMPLOYEE";
+  // Every staff role clocks in/out for themselves; only HR Manager/Admin review all.
+  const isReviewer = ["HR_MANAGER", "ADMIN"].includes(user.role);
   const employeeId = id || user.employeeId;
   const [records, setRecords] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -27,26 +28,40 @@ export default function Attendance() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [openRecord, setOpenRecord] = useState(null);
 
   function load() {
     setLoading(true);
     const query = new URLSearchParams();
     if (employeeFilter) query.set("employeeId", employeeFilter);
     if (statusFilter) query.set("status", statusFilter);
-    const request = isHR && !id ? api(`/attendance?${query}`) : api(`/employees/${employeeId}/attendance`);
+    const request = isReviewer && !id ? api(`/attendance?${query}`) : api(`/employees/${employeeId}/attendance`);
     request.then(setRecords).catch((e) => alert(e.message)).finally(() => setLoading(false));
   }
 
+  // Resolve the caller's OWN open record so any role can clock in/out.
   useEffect(() => {
-    if (isHR && !id) api("/employees").then(setEmployees).catch((e) => alert(e.message));
-  }, [isHR, id]);
-  useEffect(load, [employeeId, employeeFilter, statusFilter, isHR, id]);
+    api(`/employees/${user.employeeId}/attendance`)
+      .then((mine) => setOpenRecord(mine.find((record) => !record.checkOut) || null))
+      .catch(() => setOpenRecord(null));
+  }, [user.employeeId]);
 
-  const openRecord = records.find((record) => !record.checkOut);
+  useEffect(() => {
+    if (isReviewer && !id) api("/employees").then(setEmployees).catch((e) => alert(e.message));
+  }, [isReviewer, id]);
+  useEffect(load, [employeeId, employeeFilter, statusFilter, isReviewer, id]);
   async function toggleClock() {
+    const action = openRecord ? "out" : "in";
+    if (!window.confirm(`Are you sure you want to check ${action}?`)) return;
     setBusy(true);
     try {
-      await api(openRecord ? `/attendance/${openRecord.id}/check-out` : "/attendance/check-in", { method: "POST" });
+      if (openRecord) {
+        await api(`/attendance/${openRecord.id}/check-out`, { method: "POST" });
+        setOpenRecord(null);
+      } else {
+        const record = await api("/attendance/check-in", { method: "POST" });
+        setOpenRecord(record);
+      }
       load();
     } catch (e) {
       alert(e.message);
@@ -76,11 +91,11 @@ export default function Attendance() {
   return (
     <div>
       <div className="page-header">
-        <h1>{id ? "Employee Attendance" : isHR ? "Attendance" : "My Attendance"}</h1>
-        {!isHR && <button className="btn" disabled={busy} onClick={toggleClock}>{openRecord ? "CHECK OUT" : "CHECK IN"}</button>}
+        <h1>{id ? "Employee Attendance" : isReviewer ? "Attendance" : "My Attendance"}</h1>
+        {!id && <button className="btn" disabled={busy} onClick={toggleClock}>{openRecord ? "CHECK OUT" : "CHECK IN"}</button>}
       </div>
-      <p className="page-sub">{isHR ? "Review worked hours and correct attendance records when needed." : "Record your working time and keep track of completed days."}</p>
-      {isHR && !id && (
+      <p className="page-sub">{isReviewer ? "Review worked hours and correct attendance records when needed." : "Record your working time and keep track of completed days."}</p>
+      {isReviewer && !id && (
         <div className="toolbar">
           <select className="toolbar-select" value={employeeFilter} onChange={(e) => setEmployeeFilter(e.target.value)}>
             <option value="">All employees</option>
@@ -94,19 +109,19 @@ export default function Attendance() {
       )}
       {loading ? <p className="muted">Loading…</p> : (
         <table className="table">
-          <thead><tr>{isHR && !id && <th>Employee</th>}<th>Check in</th><th>Check out</th><th>Worked hours</th><th>Status</th>{isHR && <th />}</tr></thead>
+          <thead><tr>{isReviewer && !id && <th>Employee</th>}<th>Check in</th><th>Check out</th><th>Worked hours</th><th>Status</th>{isReviewer && <th />}</tr></thead>
           <tbody>
             {records.map((record) => (
               <tr key={record.id}>
-                {isHR && !id && <td>{record.employee?.name}</td>}
+                {isReviewer && !id && <td>{record.employee?.name}</td>}
                 <td>{formatDate(record.checkIn)}</td>
                 <td>{formatDate(record.checkOut)}</td>
                 <td>{record.workedHours == null ? "Open" : `${Number(record.workedHours).toFixed(2)} h`}</td>
                 <td><span className={`badge badge-${record.status.toLowerCase()}`}>{STATUS_LABEL[record.status] || record.status}</span></td>
-                {isHR && <td><button className="btn btn-secondary btn-sm" onClick={() => setEditing(record)}>Correct</button></td>}
+                {isReviewer && <td><button className="btn btn-secondary btn-sm" onClick={() => setEditing(record)}>Correct</button></td>}
               </tr>
             ))}
-            {!records.length && <tr><td colSpan={isHR ? 6 : 5} className="muted">No attendance records.</td></tr>}
+            {!records.length && <tr><td colSpan={isReviewer ? 6 : 5} className="muted">No attendance records.</td></tr>}
           </tbody>
         </table>
       )}

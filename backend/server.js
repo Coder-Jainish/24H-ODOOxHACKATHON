@@ -34,69 +34,76 @@ const PERMISSIONS = [
   { method: "GET", path: "/api/auth/users", roles: [ROLES.ADM] },
   { method: "PATCH", path: "/api/auth/users/:id", roles: [ROLES.ADM] },
   { method: "DELETE", path: "/api/auth/users/:id", roles: [ROLES.ADM] },
-  // Employees (API.md §1)
-  { method: "POST", path: "/api/employees", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  // Employees (API.md §1) — HRM/ADM own this module ("Full CRUD on Employees").
+  // HPU/HPM read only the /employees LIST: the Payrun wizard needs it (+ GET /contracts)
+  // to list eligible staff and show contract hints (PRD §3: payroll roles have no HR sections).
+  { method: "POST", path: "/api/employees", roles: [ROLES.HRM, ROLES.ADM] },
   { method: "GET", path: "/api/employees", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/employees/me", roles: [ROLES.EMP] },
-  { method: "GET", path: "/api/employees/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "PATCH", path: "/api/employees/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/employees/:id", roles: [ROLES.ADM] },
-  { method: "GET", path: "/api/employees/:id/contracts", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "GET", path: "/api/employees/:id/attendance", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "GET", path: "/api/employees/:id/time-off", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  // Attendance (API.md §4)
-  { method: "POST", path: "/api/attendance/check-in", roles: [ROLES.EMP] },
-  { method: "POST", path: "/api/attendance/:id/check-out", roles: [ROLES.EMP] },
-  { method: "GET", path: "/api/attendance", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/attendance/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "PATCH", path: "/api/attendance/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/attendance/:id", roles: [ROLES.ADM] },
+  { method: "GET", path: "/api/employees/me", roles: ["AUTH"] },
+  { method: "GET", path: "/api/employees/:id", roles: [ROLES.HRM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/employees/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/employees/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/employees/:id/contracts", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/employees/:id/attendance", roles: ["AUTH"] },
+  { method: "GET", path: "/api/employees/:id/time-off", roles: [ROLES.HRM, ROLES.ADM, ROLES.EMP] },
+  // Attendance (API.md §4) — check-in/out is SELF-SERVICE for every authenticated
+// user (all staff clock in, including HR/payroll roles); managers review all.
+  { method: "POST", path: "/api/attendance/check-in", roles: ["AUTH"] },
+  { method: "POST", path: "/api/attendance/:id/check-out", roles: ["AUTH"] },
+  { method: "GET", path: "/api/attendance", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/attendance/:id", roles: [ROLES.HRM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/attendance/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/attendance/:id", roles: [ROLES.HRM, ROLES.ADM] },
   // Contracts (API.md §2) — /active and /validate-overlap must be listed BEFORE :id
-  { method: "POST", path: "/api/contracts", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/contracts", roles: [ROLES.HRM, ROLES.ADM] },
+  // GET /contracts list stays open to HPU/HPM — Payrun wizard eligibility/hints.
   { method: "GET", path: "/api/contracts", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/contracts/active", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "POST", path: "/api/contracts/validate-overlap", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/contracts/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "PATCH", path: "/api/contracts/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/contracts/:id", roles: [ROLES.ADM] },
-  // Salary structures — minimal read-only for contract form picker (full CRUD in Phase 8)
+  { method: "GET", path: "/api/contracts/active", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "POST", path: "/api/contracts/validate-overlap", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/contracts/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "PATCH", path: "/api/contracts/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/contracts/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  // Salary structures — HRM gets list-only read (contract form structure picker,
+  // PRD §6.A.2), never rule details; full read for payroll roles.
   { method: "GET", path: "/api/salary-structures", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  // Working Schedules (API.md §3)
-  { method: "POST", path: "/api/schedules", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/schedules", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/schedules/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "PATCH", path: "/api/schedules/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/schedules/:id", roles: [ROLES.ADM] },
+  // Working Schedules (API.md §3) — HRM/ADM only (PRD §3: payroll roles have no HR sections)
+  { method: "POST", path: "/api/schedules", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/schedules", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/schedules/:id", roles: [ROLES.HRM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/schedules/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/schedules/:id", roles: [ROLES.HRM, ROLES.ADM] },
   // Time Off Types (API.md §5)
-  { method: "POST", path: "/api/time-off/types", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/time-off/types", roles: [ROLES.HRM, ROLES.ADM] },
   { method: "GET", path: "/api/time-off/types", roles: ["AUTH"] },
   { method: "GET", path: "/api/time-off/types/:id", roles: ["AUTH"] },
-  { method: "PATCH", path: "/api/time-off/types/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/time-off/types/:id", roles: [ROLES.ADM] },
+  { method: "PATCH", path: "/api/time-off/types/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/time-off/types/:id", roles: [ROLES.HRM, ROLES.ADM] },
   // Time Off Allocations (API.md §6)
-  { method: "POST", path: "/api/time-off/allocations", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/time-off/allocations", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "PATCH", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/time-off/allocations/:id", roles: [ROLES.ADM] },
-  // Time Off Requests (API.md §7)
+  { method: "POST", path: "/api/time-off/allocations", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/time-off/allocations", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.ADM, ROLES.EMP] },
+  { method: "PATCH", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/time-off/allocations/:id", roles: [ROLES.HRM, ROLES.ADM] },
+  // Time Off Requests (API.md §7) — approve/refuse is HRM/ADM only (PRD §3: payroll
+  // roles have "no HR Payroll sections"; they must not act on leave requests).
   { method: "POST", path: "/api/time-off/requests", roles: [ROLES.EMP] },
-  { method: "GET", path: "/api/time-off/requests", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/time-off/requests/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "GET", path: "/api/time-off/requests", roles: [ROLES.HRM, ROLES.ADM] },
+  { method: "GET", path: "/api/time-off/requests/:id", roles: [ROLES.HRM, ROLES.ADM, ROLES.EMP] },
   { method: "PATCH", path: "/api/time-off/requests/:id", roles: [ROLES.EMP] },
   { method: "DELETE", path: "/api/time-off/requests/:id", roles: [ROLES.EMP] },
   { method: "POST", path: "/api/time-off/requests/:id/approve", roles: [ROLES.HRM, ROLES.ADM] },
   { method: "POST", path: "/api/time-off/requests/:id/refuse", roles: [ROLES.HRM, ROLES.ADM] },
-  // Salary Structures (API.md §8)
+  // Salary Structures (API.md §8) — payroll roles only (HRM read is list-only for
+  // the contract picker, no rule details); Full CRUD on structures belongs to HPM/ADM.
   { method: "POST", path: "/api/salary-structures", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "GET", path: "/api/salary-structures", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/salary-structures/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/salary-structures/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
   { method: "PATCH", path: "/api/salary-structures/:id", roles: [ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/salary-structures/:id", roles: [ROLES.ADM] },
-  // Salary Rules (API.md §9)
+  { method: "DELETE", path: "/api/salary-structures/:id", roles: [ROLES.HPM, ROLES.ADM] },
+  // Salary Rules (API.md §9) — HRM explicitly has NO access (PRD §3)
   { method: "POST", path: "/api/salary-rules", roles: [ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/salary-rules", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/salary-rules/:id", roles: [ROLES.HRM, ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/salary-rules", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "GET", path: "/api/salary-rules/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
   { method: "PATCH", path: "/api/salary-rules/:id", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "DELETE", path: "/api/salary-rules/:id", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "POST", path: "/api/salary-rules/preview", roles: [ROLES.HPM, ROLES.ADM] },
@@ -112,14 +119,15 @@ const PERMISSIONS = [
   { method: "POST", path: "/api/payruns/:id/mark-paid", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "POST", path: "/api/payruns/:id/close", roles: [ROLES.HPM, ROLES.ADM] },
   { method: "POST", path: "/api/payruns/:id/send", roles: [ROLES.HPM, ROLES.ADM] },
-  // Payslips (API.md §11)
+  // Payslips (API.md §11) — EMP has no payroll access per PRD (§3 Role Matrix).
+  // HPU = Read/Update; HPM = Full CRUD; ADM = everything.
   { method: "GET", path: "/api/payslips", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
-  { method: "GET", path: "/api/payslips/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
-  { method: "PATCH", path: "/api/payslips/:id", roles: [ROLES.HPM, ROLES.ADM] },
-  { method: "DELETE", path: "/api/payslips/:id", roles: [ROLES.ADM] },
-  { method: "POST", path: "/api/payslips/:id/pdf", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM, ROLES.EMP] },
+  { method: "GET", path: "/api/payslips/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "PATCH", path: "/api/payslips/:id", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
+  { method: "DELETE", path: "/api/payslips/:id", roles: [ROLES.HPM, ROLES.ADM] },
+  { method: "POST", path: "/api/payslips/:id/pdf", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
   { method: "POST", path: "/api/payslips/:id/send", roles: [ROLES.HPM, ROLES.ADM] },
-  // Dashboard (API.md §12) — HPU/HPM/ADM; HRM gets a dept-scoped view via the UI (optional)
+  // Dashboard (API.md §12) — payroll roles + Admin; HR Manager has no Payroll access (PRD §3)
   { method: "GET", path: "/api/dashboard/kpis", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
   { method: "GET", path: "/api/dashboard/trends/net-salary", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
   { method: "GET", path: "/api/dashboard/department-cost", roles: [ROLES.HPU, ROLES.HPM, ROLES.ADM] },
@@ -308,7 +316,10 @@ app.get("/api/health", async (_req, res) => {
 
 // EMP is allowed past middleware, but only for their own profile (self-check).
 function assertSelfOrHR(req, res) {
-  if (req.user.role === ROLES.EMP && req.user.employeeId !== req.params.id) {
+  // HR Manager and Admin may browse all employees; every other role (Employee,
+  // payroll user/manager) may only ever see their OWN records.
+  const canBrowseAll = [ROLES.HRM, ROLES.ADM].includes(req.user.role);
+  if (!canBrowseAll && req.user.employeeId !== req.params.id) {
     res.status(403).json({ data: null, error: { code: "FORBIDDEN", message: "Access denied" } });
     return false;
   }
@@ -347,9 +358,9 @@ app.get("/api/employees", async (req, res) => {
   }
 });
 
-// GET /api/employees/me — employee self profile (must be before :id).
-// Includes their own working schedule + shifts + related counts so the employee
-// home page is a single round-trip (self-service landing for the EMP role).
+// GET /api/employees/me — any authenticated user's own profile (must be before :id).
+// Returns their working schedule + shifts + related counts in one round-trip so the
+// Profile landing page works for every role (EMP self-service landing; HR/admin profile).
 app.get("/api/employees/me", async (req, res) => {
   try {
     const employee = await prisma.employee.findUnique({
@@ -475,7 +486,8 @@ function attendanceStatus(checkIn, checkOut, workedHours, schedule) {
 }
 
 function isAttendanceOwner(req, attendance) {
-  return req.user.role !== ROLES.EMP || req.user.employeeId === attendance.employeeId;
+  // HR Manager/Admin may act on any record; Employee and payroll roles are self-only.
+  return [ROLES.HRM, ROLES.ADM].includes(req.user.role) || req.user.employeeId === attendance.employeeId;
 }
 
 async function getAttendanceWithSchedule(id) {

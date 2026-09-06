@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 
-// Dashboard analytics are HPU/HPM/ADM (API.md §12); other roles get a welcome view.
+// Dashboard analytics are payroll roles + Admin (API.md §12); HR Manager has no
+// Payroll access (PRD §3).
 const ANALYTICS_ROLES = ["HR_PAYROLL_USER", "HR_PAYROLL_MANAGER", "ADMIN"];
 
 export default function Dashboard() {

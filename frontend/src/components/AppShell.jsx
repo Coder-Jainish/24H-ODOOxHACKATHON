@@ -47,9 +47,11 @@ export default function AppShell({ children }) {
 
   const role = user?.role;
 
-  const isHR = ["HR_MANAGER", "HR_PAYROLL_USER", "HR_PAYROLL_MANAGER", "ADMIN"].includes(role);
+  // HR-management sections belong to the HR Manager and Admin only. Payroll roles
+  // (Payroll User / Payroll Manager) and Admin get the Payroll menu (PRD §3).
+  // HR Manager is NOT given Payroll access.
+  const isHR = ["HR_MANAGER", "ADMIN"].includes(role);
   const isPayroll = ["HR_PAYROLL_USER", "HR_PAYROLL_MANAGER", "ADMIN"].includes(role);
-  const isConfig = ["HR_PAYROLL_MANAGER", "ADMIN"].includes(role);
 
   const go = (to) => navigate(to);
 
@@ -60,13 +62,11 @@ export default function AppShell({ children }) {
           <span className="brand" onClick={() => go("/")}>
             OXP
           </span>
+          <span className="nav-link-plain" onClick={() => go("/")}>
+            My Profile
+          </span>
           {isHR && (
             <Dropdown label="Employees" items={[{ to: "/employees", label: "Employees" }, { to: "/schedules", label: "Working Schedules" }]} onNavigate={go} />
-          )}
-          {role === "EMPLOYEE" && (
-            <span className="nav-link-plain" onClick={() => go("/")}>
-              My Profile
-            </span>
           )}
           {isHR && (
             <Dropdown label="Contracts" items={[{ to: "/contracts", label: "Contracts" }]} onNavigate={go} />
@@ -87,6 +87,11 @@ export default function AppShell({ children }) {
               onNavigate={go}
             />
           )}
+          {(role === "EMPLOYEE" || role === "HR_PAYROLL_USER" || role === "HR_PAYROLL_MANAGER") && (
+            <span className="nav-link-plain" onClick={() => go("/attendance")}>
+              My Attendance
+            </span>
+          )}
           {role === "EMPLOYEE" && (
             <span className="nav-link-plain" onClick={() => go("/time-off/requests")}>
               My Time Off
@@ -96,14 +101,11 @@ export default function AppShell({ children }) {
             <Dropdown
               label="Payroll"
               items={[
+                { to: "/dashboard", label: "Payroll Dashboard" },
                 { to: "/payruns", label: "Payruns" },
                 { to: "/payslips", label: "Payslips" },
-                ...(isConfig
-                  ? [
-                      { to: "/salary-structures", label: "Salary Structures" },
-                      { to: "/salary-rules", label: "Salary Rules" },
-                    ]
-                  : []),
+                { to: "/salary-structures", label: "Salary Structures" },
+                { to: "/salary-rules", label: "Salary Rules" },
               ]}
               onNavigate={go}
             />

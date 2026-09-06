@@ -3,24 +3,30 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
 import { DAYS } from "./Schedules";
 
-// Self-service landing page for the EMPLOYEE role (API.md §1 "/employees/me").
-// Shows the signed-in employee's own profile details, their assigned working
-// schedule (only the schedule they were provided) and their time-off balances.
+// Profile: default landing page for every role ("/" → Home → Profile).
+// Uses /employees/me (now AUTH, own record) to show the signed-in user's own
+// profile details, their assigned working schedule and their leave balances.
 function initials(name = "") {
   return name.split(" ").map((w) => (w[0] || "").toUpperCase()).slice(0, 2).join("");
 }
 
-export default function EmployeeHome() {
+export default function Profile() {
   const { user } = useAuth();
   const [emp, setEmp] = useState(null);
   const [timeOff, setTimeOff] = useState({ allocations: [] });
+  const [timeOffHidden, setTimeOffHidden] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([
       api("/employees/me"),
-      api(`/employees/${user?.employeeId}/time-off`).catch(() => ({ allocations: [] })),
+      api(`/employees/${user?.employeeId}/time-off`)
+        .then((t) => t)
+        .catch(() => {
+          setTimeOffHidden(true);
+          return { allocations: [] };
+        }),
     ])
       .then(([e, t]) => {
         if (cancelled) return;
@@ -96,7 +102,9 @@ export default function EmployeeHome() {
 
       <div className="card" style={{ marginTop: "1rem" }}>
         <h3 style={{ marginBottom: "0.75rem" }}>My Leave Balances</h3>
-        {timeOff.allocations.length === 0 ? (
+        {timeOffHidden ? (
+          <p className="muted">Leave balances are managed by HR.</p>
+        ) : timeOff.allocations.length === 0 ? (
           <p className="muted">You have no leave allocations yet — ask HR to allocate some.</p>
         ) : (
           <div className="balance-strip">
