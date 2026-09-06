@@ -181,11 +181,11 @@ function TrendChart({ data }) {
           <text x={PL - 6} y={y(v) + 4} textAnchor="end" fontSize="10" fill="#999">{compactMoney(v)}</text>
         </g>
       ))}
-      <polygon points={area} fill="#71508c18" />
-      <polyline points={pts} fill="none" stroke="#71508c" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      <polygon points={area} fill="rgba(113, 75, 103, 0.10)" />
+      <polyline points={pts} fill="none" stroke="var(--ox)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
       {data.map((d, i) => (
         <g key={d.month}>
-          <circle cx={x(i)} cy={y(d.totalNet)} r="4" fill="#71508c" stroke="#fff" strokeWidth="1.5">
+          <circle cx={x(i)} cy={y(d.totalNet)} r="4" fill="var(--ox)" stroke="#fff" strokeWidth="1.5">
             <title>{`${monthLabel(d.month)}: ${money(d.totalNet)}`}</title>
           </circle>
           <text x={x(i)} y={H - 10} textAnchor="middle" fontSize="10" fill="#999">{monthLabel(d.month)}</text>

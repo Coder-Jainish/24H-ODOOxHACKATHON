@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth-context";
 
 // Odoo-style top navbar with dropdown menus (matches Design/#screenflow).
 // RBAC-aware: items shown/hidden per role (API.md §12).
-function Dropdown({ label, items, onNavigate }) {
+function Dropdown({ label, items, onNavigate, active }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -18,7 +18,10 @@ function Dropdown({ label, items, onNavigate }) {
 
   return (
     <div className="nav-item" ref={ref}>
-      <button className={"nav-toggle" + (open ? " open" : "")} onClick={() => setOpen(!open)}>
+      <button
+        className={"nav-toggle" + (open ? " open" : "") + (active ? " active-nav" : "")}
+        onClick={() => setOpen(!open)}
+      >
         {label} <span className="caret">▾</span>
       </button>
       {open && (
@@ -44,6 +47,7 @@ function Dropdown({ label, items, onNavigate }) {
 export default function AppShell({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   const role = user?.role;
 
@@ -54,31 +58,38 @@ export default function AppShell({ children }) {
   const isPayroll = ["HR_PAYROLL_USER", "HR_PAYROLL_MANAGER", "ADMIN"].includes(role);
 
   const go = (to) => navigate(to);
+  const isActive = (path) => pathname === path || pathname.startsWith(path + "/");
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-left">
           <span className="brand" onClick={() => go("/")}>
-            OXP
+            <span className="brand-tile">P</span>PeoplePay360
           </span>
-          <span className="nav-link-plain" onClick={() => go("/")}>
+          <span className={"nav-link-plain" + (isActive("/") ? " active-nav" : "")} onClick={() => go("/")}>
             My Profile
           </span>
           {isHR && (
-            <Dropdown label="Employees" items={[{ to: "/employees", label: "Employees" }, { to: "/schedules", label: "Working Schedules" }]} onNavigate={go} />
+            <Dropdown
+              label="Employees"
+              active={isActive("/employees") || isActive("/schedules")}
+              items={[{ to: "/employees", label: "Employees" }, { to: "/schedules", label: "Working Schedules" }]}
+              onNavigate={go}
+            />
           )}
           {isHR && (
-            <Dropdown label="Contracts" items={[{ to: "/contracts", label: "Contracts" }]} onNavigate={go} />
+            <Dropdown label="Contracts" active={isActive("/contracts")} items={[{ to: "/contracts", label: "Contracts" }]} onNavigate={go} />
           )}
           {isHR && (
-            <span className="nav-link-plain" onClick={() => go("/attendance")}>
+            <span className={"nav-link-plain" + (isActive("/attendance") ? " active-nav" : "")} onClick={() => go("/attendance")}>
               Attendance
             </span>
           )}
           {isHR && (
             <Dropdown
               label="Time Off"
+              active={isActive("/time-off")}
               items={[
                 { to: "/time-off/requests", label: "Time Off Requests" },
                 { to: "/time-off/allocations", label: "Grant Allocations" },
@@ -88,18 +99,19 @@ export default function AppShell({ children }) {
             />
           )}
           {(role === "EMPLOYEE" || role === "HR_PAYROLL_USER" || role === "HR_PAYROLL_MANAGER") && (
-            <span className="nav-link-plain" onClick={() => go("/attendance")}>
+            <span className={"nav-link-plain" + (isActive("/attendance") ? " active-nav" : "")} onClick={() => go("/attendance")}>
               My Attendance
             </span>
           )}
           {role === "EMPLOYEE" && (
-            <span className="nav-link-plain" onClick={() => go("/time-off/requests")}>
+            <span className={"nav-link-plain" + (isActive("/time-off/requests") ? " active-nav" : "")} onClick={() => go("/time-off/requests")}>
               My Time Off
             </span>
           )}
           {isPayroll && (
             <Dropdown
               label="Payroll"
+              active={isActive("/dashboard") || isActive("/payruns") || isActive("/payslips") || isActive("/salary-structures") || isActive("/salary-rules")}
               items={[
                 { to: "/dashboard", label: "Payroll Dashboard" },
                 { to: "/payruns", label: "Payruns" },

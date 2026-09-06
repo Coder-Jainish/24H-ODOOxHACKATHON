@@ -45,6 +45,7 @@ export default function EmployeeDetail() {
         <button className="btn btn-secondary" onClick={() => navigate("/employees")}>
           ← Back
         </button>
+        <h1>{emp.name}</h1>
         <div className="smart-buttons">
           <button className="smart-btn" onClick={() => navigate(`/employees/${id}/contracts`)}>
             Contracts <span className="smart-count">{counts.contracts}</span>
@@ -64,7 +65,6 @@ export default function EmployeeDetail() {
       <div className="employee-header">
         <div className="avatar large">{initials(emp.name)}</div>
         <div>
-          <h1>{emp.name}</h1>
           <div className="emp-sub">
             {emp.jobPosition} • {emp.department}
           </div>

@@ -1,3 +1,19 @@
+/* ============ Odoo theme tokens ============
+   Single source of truth for the brand palette so every screen shares one look. */
+:root {
+  --ox: #714b67;              /* brand purple (Odoo) */
+  --ox-dark: #69495f;         /* hover/darker purple */
+  --oxsoft: #a78bbf;          /* soft purple (charts/gradients) */
+  --ox-tint: #f8f5fa;         /* extremely light purple surfaces */
+  --ox-tint-2: #f3eef5;       /* light purple chips/avatars */
+  --ox-border: #e6e2e9;       /* purple-tinted hairline */
+  --bg: #f4f5f7;              /* app background */
+  --card-border: #e0e0e0;     /* card/table border */
+  --text: #212529;
+  --muted: #6c757d;
+  --focus: rgba(113, 75, 103, 0.15);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -16,7 +32,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #714b67, #875ca1, #3a7bd5);
+  background: linear-gradient(135deg, var(--ox), #5a3a51, #3f2840);
 }
 
 .login-card {
@@ -41,9 +57,9 @@ body {
 .login-logo {
   width: 52px;
   height: 52px;
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
-  border-radius: 50%;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -73,13 +89,13 @@ body {
 }
 
 .login-card input:focus {
-  border-color: #714b67;
+  border-color: var(--ox);
   box-shadow: 0 0 0 3px rgba(113, 75, 103, 0.15);
 }
 
 .login-card button[type="submit"] {
   padding: 0.65rem;
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -119,9 +135,9 @@ body {
 .demo-btn {
   font-size: 0.72rem;
   padding: 0.3rem 0.55rem;
-  background: #f3f0f7;
-  color: #714b67;
-  border: 1px solid #e3dce8;
+  background: var(--ox-tint-2);
+  color: var(--ox);
+  border: 1px solid var(--ox-border);
   border-radius: 999px;
   cursor: pointer;
 }
@@ -153,11 +169,33 @@ body {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
   font-weight: 800;
-  font-size: 1.2rem;
-  color: #714b67;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  color: var(--ox);
   margin-right: 0.75rem;
   cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Odoo app-icon tile for the brand in the top navbar. */
+.brand-tile {
+  width: 34px;
+  height: 34px;
+  background: var(--ox);
+  border-radius: 8px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.78rem;
+  font-style: normal;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
 }
 
 .nav-item {
@@ -175,8 +213,17 @@ body {
 }
 
 .nav-toggle:hover,
-.nav-toggle.open {
-  background: #f2f2f2;
+.nav-toggle.open,
+.nav-link-plain:hover,
+.nav-link-plain.open {
+  background: var(--ox-tint);
+  color: var(--ox);
+}
+
+.active-nav {
+  background: var(--ox-tint);
+  color: var(--ox);
+  font-weight: 600;
 }
 
 .caret {
@@ -195,7 +242,8 @@ body {
 }
 
 .nav-link-plain:hover {
-  background: #f2f2f2;
+  background: var(--ox-tint);
+  color: var(--ox);
 }
 
 .nav-menu {
@@ -236,7 +284,7 @@ body {
 .user-chip {
   width: 34px;
   height: 34px;
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
   border-radius: 50%;
   display: flex;
@@ -305,13 +353,31 @@ body {
 }
 
 /* ---------- Generic UI primitives (used by feature screens later) ---------- */
+/* Odoo-style breadcrumb tab: title sits on a light rule with a purple tab underline. */
 .page-header {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--ox-border);
+  padding-bottom: 0;
+}
+
+.page-header h1 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #fff;
+  border: 1px solid var(--ox-border);
+  border-bottom: 2px solid var(--ox);
+  border-radius: 6px 6px 0 0;
+  padding: 0.5rem 1rem 0.45rem;
+  margin-bottom: -1px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .btn {
@@ -320,7 +386,7 @@ body {
   border: 1px solid transparent;
   font-size: 0.85rem;
   cursor: pointer;
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
   font-weight: 600;
 }
@@ -436,8 +502,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  background: #f8f6fa;
-  border: 1px solid #e3dce8;
+  background: var(--ox-tint);
+  border: 1px solid var(--ox-border);
   border-radius: 8px;
   padding: 0.5rem 0.85rem;
   min-width: 140px;
@@ -511,7 +577,7 @@ body {
   justify-content: center;
   min-width: 28px;
   height: 24px;
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
   border-radius: 999px;
   font-size: 0.75rem;
@@ -522,19 +588,19 @@ body {
   display: inline-block;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.72rem;
-  background: #f3f0f7;
-  border: 1px solid #e3dce8;
+  background: var(--ox-tint-2);
+  border: 1px solid var(--ox-border);
   border-radius: 4px;
   padding: 0.05rem 0.4rem;
   margin-left: 0.35rem;
-  color: #714b67;
+  color: var(--ox);
 }
 
 .status-pill.cat-basic { background: #e7f5ff; color: #0b5ed7; }
 .status-pill.cat-allowance { background: #e9f7ef; color: #1a7f4b; }
 .status-pill.cat-gross { background: #eef1e6; color: #6a7600; }
 .status-pill.cat-deduction { background: #fdeaea; color: #b02a2a; }
-.status-pill.cat-net { background: #f3f0f7; color: #714b67; }
+.status-pill.cat-net { background: var(--ox-tint-2); color: var(--ox); }
 
 .preview-card {
   margin-top: 1.25rem;
@@ -575,7 +641,7 @@ body {
 }
 
 .preview-total {
-  background: #f8f6fa;
+  background: var(--ox-tint);
   font-weight: 600;
 }
 
@@ -606,7 +672,7 @@ body {
 }
 
 .search:focus {
-  border-color: #714b67;
+  border-color: var(--ox);
   box-shadow: 0 0 0 3px rgba(113, 75, 103, 0.12);
 }
 
@@ -627,7 +693,7 @@ body {
 }
 
 .view-toggle button.active {
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
 }
 
@@ -655,7 +721,7 @@ body {
 .avatar {
   width: 52px;
   height: 52px;
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
   border-radius: 50%;
   display: flex;
@@ -749,7 +815,7 @@ body {
 
 .modal input:focus,
 .modal select:focus {
-  border-color: #714b67;
+  border-color: var(--ox);
 }
 
 .modal-actions {
@@ -769,8 +835,8 @@ body {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  background: #f3f0f7;
-  color: #714b67;
+  background: var(--ox-tint-2);
+  color: var(--ox);
   border: 1px solid #ddd;
   border-radius: 6px;
   padding: 0.45rem 0.75rem;
@@ -784,7 +850,7 @@ body {
 }
 
 .smart-count {
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
   border-radius: 999px;
   font-size: 0.72rem;
@@ -814,7 +880,7 @@ body {
 }
 
 .emp-contact {
-  color: #714b67;
+  color: var(--ox);
   font-size: 0.85rem;
 }
 
@@ -893,8 +959,8 @@ body {
 .day-chip {
   display: inline-block;
   font-size: 0.72rem;
-  background: #f3f0f7;
-  border: 1px solid #e3dce8;
+  background: var(--ox-tint-2);
+  border: 1px solid var(--ox-border);
   border-radius: 999px;
   padding: 0.15rem 0.55rem;
   margin: 0.15rem 0.2rem 0 0;
@@ -965,7 +1031,7 @@ body {
 .status-pill.stone { background: #f1f1f1; color: #666; }
 .status-pill.computed { background: #e7f0ff; color: #0b5ed7; }
 .status-pill.validated { background: #d4edda; color: #155724; }
-.status-pill.paid { background: #f3e8ff; color: #714b67; }
+.status-pill.paid { background: var(--ox-tint-2); color: var(--ox); }
 .status-pill.closed { background: #e9ecef; color: #495057; }
 
 .section-title {
@@ -1034,8 +1100,8 @@ body {
 }
 
 .wizard-step.active {
-  background: #f3e8ff;
-  color: #714b67;
+  background: var(--ox-tint-2);
+  color: var(--ox);
 }
 
 .wizard-step.done {
@@ -1080,7 +1146,7 @@ body {
 
 .field input:focus,
 .field select:focus {
-  border-color: #714b67;
+  border-color: var(--ox);
 }
 
 .form-row {
@@ -1111,8 +1177,8 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0.45rem 0.75rem;
-  background: #faf9fc;
-  border-bottom: 1px solid #edeaf2;
+  background: var(--ox-tint);
+  border-bottom: 1px solid var(--ox-border);
   font-size: 0.8rem;
   font-weight: 600;
   color: #555;
@@ -1122,7 +1188,7 @@ body {
   display: inline-block;
   min-width: 18px;
   text-align: center;
-  background: #714b67;
+  background: var(--ox);
   color: #fff;
   border-radius: 999px;
   font-size: 0.7rem;
@@ -1155,15 +1221,15 @@ label.emp-pick-row {
 }
 
 label.emp-pick-row:hover {
-  background: #f8f6fa;
+  background: var(--ox-tint);
 }
 
 .emp-pick-avatar {
   flex: 0 0 30px;
   width: 30px;
   height: 30px;
-  background: #f3e8ff;
-  color: #714b67;
+  background: var(--ox-tint-2);
+  color: var(--ox);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1412,8 +1478,8 @@ label.emp-pick-row:hover {
 }
 
 .kpi-card.kpi-primary {
-  background: #71508c;
-  border-color: #71508c;
+  background: var(--ox);
+  border-color: var(--ox);
 }
 
 .kpi-card.kpi-primary .kpi-label,
@@ -1500,7 +1566,7 @@ label.emp-pick-row:hover {
 
 .bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #a78bbf, #71508c);
+  background: linear-gradient(90deg, var(--oxsoft), var(--ox));
   border-radius: 6px;
   min-width: 2px;
 }
