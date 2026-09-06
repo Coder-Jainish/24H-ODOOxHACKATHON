@@ -312,27 +312,6 @@ async function main() {
   }
   console.log("✅ Seeded time off allocations (Aarav 24 PTO, Sara 20 PTO + 8 Sick, John 22 PTO, EMP demo 20 PTO)");
 
-  // Pending time-off request for the demo employee — lets HRM demo the new
-  // decision modal (approve/refuse with a reply note) right after seeding.
-  if (demoEmp && pto) {
-    const hasPending = await prisma.timeOffRequest.findFirst({
-      where: { employeeId: demoEmp.id, status: "PENDING" },
-    });
-    if (!hasPending) {
-      await prisma.timeOffRequest.create({
-        data: {
-          employeeId: demoEmp.id,
-          timeOffTypeId: pto.id,
-          startDate: new Date("2026-09-28"),
-          endDate: new Date("2026-09-30"),
-          reason: "Blocked leave — wedding in the family.",
-          status: "PENDING",
-        },
-      });
-      console.log("✅ Seeded a pending time-off request for the demo employee");
-    }
-  }
-
   // Pre-computed payrun (June 2026) so the Payruns list/dashboard have history.
   // Bootstrap data only — computed here once; live batches go through the runtime
   // POST /api/payruns/:id/compute route (which reuses computePayslip() from server.js).
@@ -1684,15 +1663,6 @@ async function main() {
 
             ]),
 
-          responseNote:
-            status === "PENDING"
-              ? null
-              : (
-                  status === "APPROVED"
-                    ? "Approved by HR — enjoy your leave."
-                    : "Refused — not enough team coverage that week. Please pick different days."
-                ),
-
           status,
 
           approvedById:
@@ -1958,6 +1928,313 @@ async function main() {
 
   }
 
+
+  // ---------------------------------------------------------------
+  // 13b. WAVE 2 — Additional ~300 demo records on top of the above
+  //      Reuses every pool/helper already built above (pick, int,
+  //      dateAt, departments, existingEmails, extendedStructures,
+  //      allTimeOffTypes, ptoType, sickType, managerPool,
+  //      schedulePool, hrUser, requestStatuses). Adding this many
+  //      more employees does NOT touch or re-run anything for the
+  //      wave-1 employees created above — it only adds new rows.
+  // ---------------------------------------------------------------
+
+  const wave2Employees = [];
+
+  // Existing employees before this wave: 5 role accounts + 4 sample
+  // employees (Aarav/Sara/John/Neha) + 100 from Wave 1 = 109.
+  // 109 + 191 = 300 total employees.
+  const WAVE2_COUNT = 191;
+  const WAVE2_START_INDEX = 101; // continues numbering after wave 1's demo.employee001-100
+
+  for (let i = 0; i < WAVE2_COUNT; i++) {
+    const globalIndex = WAVE2_START_INDEX + i;
+
+    const departmentConfig = departments[globalIndex % departments.length];
+
+    const first = firstNames[nameIndex % firstNames.length];
+    nameIndex++;
+
+    const last = lastNames[(globalIndex * 7) % lastNames.length];
+
+    const email = `demo.employee${String(globalIndex).padStart(3, "0")}@oxp.com`;
+
+    if (existingEmails.has(email)) {
+      continue; // safe to re-run: skips anything already seeded
+    }
+
+    const position = pick(departmentConfig.positions);
+
+    const wage =
+      Math.round((departmentConfig.base + int(-7000, 22000)) / 500) * 500;
+
+    const employee = await prisma.employee.create({
+      data: {
+        name: `${first} ${last}`,
+        email,
+        department: departmentConfig.department,
+        jobPosition: position,
+        isActive: true
+      }
+    });
+
+    existingEmails.add(email);
+    wave2Employees.push(employee);
+  }
+
+  console.log(`   Wave 2: created ${wave2Employees.length} new employees.`);
+
+  // Assign managers + schedules, same pools as wave 1.
+  for (let index = 0; index < wave2Employees.length; index++) {
+    const employee = wave2Employees[index];
+
+    const manager = managerPool.length ? pick(managerPool) : null;
+    const schedule = schedulePool.length
+      ? schedulePool[index % schedulePool.length]
+      : null;
+
+    await prisma.employee.update({
+      where: { id: employee.id },
+      data: {
+        managerId:
+          manager && manager.id !== employee.id ? manager.id : null,
+        workingScheduleId: schedule ? schedule.id : null
+      }
+    });
+  }
+
+  // Contracts — same structure-selection rule as wave 1.
+  const wave2Contracts = [];
+
+  for (let index = 0; index < wave2Employees.length; index++) {
+    const employee = wave2Employees[index];
+
+    const departmentConfig =
+      departments.find((d) => d.department === employee.department) ||
+      departments[0];
+
+    let structureName = "Regular Full-Time";
+
+    if (
+      employee.jobPosition.includes("Manager") ||
+      employee.jobPosition.includes("Lead")
+    ) {
+      structureName = "Management";
+    } else if (employee.department === "Sales") {
+      structureName = "Sales & Commission";
+    } else if (employee.jobPosition.includes("Senior")) {
+      structureName = "Senior Professional";
+    }
+
+    const structure =
+      structureName === "Regular Full-Time"
+        ? salaryStructure
+        : extendedStructures[structureName];
+
+    const baseWage =
+      Math.round((departmentConfig.base + int(-5000, 18000)) / 500) * 500;
+
+    // Every 4th wave-2 employee also gets a historical (expired) contract.
+    if (index % 4 === 0) {
+      const oldWage = Math.round((baseWage * 0.88) / 500) * 500;
+
+      await prisma.contract.create({
+        data: {
+          employeeId: employee.id,
+          startDate: new Date("2025-01-01"),
+          endDate: new Date("2025-12-31"),
+          wage: oldWage,
+          department: employee.department,
+          position: employee.jobPosition,
+          salaryStructureId: structure.id,
+          status: "EXPIRED"
+        }
+      });
+    }
+
+    const contract = await prisma.contract.create({
+      data: {
+        employeeId: employee.id,
+        startDate: new Date("2026-01-01"),
+        endDate: null,
+        wage: baseWage,
+        department: employee.department,
+        position: employee.jobPosition,
+        salaryStructureId: structure.id,
+        status: "ACTIVE"
+      }
+    });
+
+    wave2Contracts.push(contract);
+  }
+
+  console.log(`   Wave 2: created contracts for ${wave2Contracts.length} employees.`);
+
+  // Leave allocations — same 4 types as wave 1.
+  const wave2AllocationByEmployee = new Map();
+
+  for (let index = 0; index < wave2Employees.length; index++) {
+    const employee = wave2Employees[index];
+    const allocations = [];
+
+    const allocationConfigs = [
+      { type: ptoType, quota: int(18, 28) },
+      { type: sickType, quota: int(7, 14) },
+      { type: allTimeOffTypes["Casual Leave"], quota: int(6, 12) },
+      { type: allTimeOffTypes["Work From Home"], quota: int(8, 18) }
+    ];
+
+    for (const config of allocationConfigs) {
+      if (!config.type) continue;
+
+      const allocation = await prisma.timeOffAllocation.create({
+        data: {
+          employeeId: employee.id,
+          timeOffTypeId: config.type.id,
+          quota: config.quota,
+          remaining: config.quota,
+          validFrom: new Date("2026-01-01"),
+          validTo: new Date("2026-12-31"),
+          approvedByHR: true
+        }
+      });
+
+      allocations.push(allocation);
+    }
+
+    wave2AllocationByEmployee.set(employee.id, allocations);
+  }
+
+  // Leave requests — same status mix + balance-decrement logic as wave 1.
+  for (let index = 0; index < wave2Employees.length; index++) {
+    const employee = wave2Employees[index];
+    const allocations = wave2AllocationByEmployee.get(employee.id) || [];
+    const usable = allocations.filter((a) => Number(a.remaining) > 0);
+
+    if (!usable.length) continue;
+
+    for (let r = 0; r < 2; r++) {
+      const allocation = pick(usable);
+      const status = requestStatuses[(index + r) % requestStatuses.length];
+      const duration = int(1, Math.min(3, Number(allocation.remaining)));
+      const startDay = int(5, 24);
+      const month = ((index + r) % 8) + 1;
+
+      const start = dateAt(2026, month, startDay);
+      const end = dateAt(
+        2026,
+        month,
+        Math.min(startDay + duration - 1, 28)
+      );
+
+      await prisma.timeOffRequest.create({
+        data: {
+          employeeId: employee.id,
+          timeOffTypeId: allocation.timeOffTypeId,
+          startDate: start,
+          endDate: end,
+          reason: pick([
+            "Personal work",
+            "Family commitment",
+            "Medical appointment",
+            "Planned vacation",
+            "Work from home request"
+          ]),
+          status,
+          approvedById:
+            status === "PENDING" ? null : hrUser ? hrUser.id : null,
+          decidedAt: status === "PENDING" ? null : new Date()
+        }
+      });
+
+      if (status === "APPROVED") {
+        await prisma.timeOffAllocation.update({
+          where: { id: allocation.id },
+          data: {
+            remaining: Math.max(0, Number(allocation.remaining) - duration)
+          }
+        });
+        allocation.remaining = Math.max(
+          0,
+          Number(allocation.remaining) - duration
+        );
+      }
+    }
+  }
+
+  // A short additional attendance window (5 weekdays) for wave-2
+  // employees (191 of them, scales up proportionally with WAVE2_COUNT),
+  // same status-scenario distribution as wave 1 (Absent/Late/Overtime/
+  // Missing Checkout/Present).
+  let wave2AttendanceDaysDone = 0;
+
+  for (let day = 18; day <= 24 && wave2AttendanceDaysDone < 5; day++) {
+    const current = dateAt(2026, 8, day);
+    const weekday = current.getDay();
+    if (weekday === 0 || weekday === 6) continue;
+
+    wave2AttendanceDaysDone++;
+
+    for (let index = 0; index < wave2Employees.length; index++) {
+      const employee = wave2Employees[index];
+
+      let status = "PRESENT";
+      let checkInHour = 9;
+      let checkInMinute = int(0, 12);
+      let checkOutHour = 18;
+      let checkOutMinute = int(0, 15);
+
+      const scenario = (index + day) % 100;
+
+      if (scenario < 4) {
+        status = "ABSENT";
+        checkInHour = 9;
+        checkInMinute = 0;
+      } else if (scenario < 11) {
+        status = "LATE";
+        checkInHour = 9;
+        checkInMinute = int(16, 45);
+      } else if (scenario < 15) {
+        status = "OVERTIME";
+        checkInHour = 8;
+        checkInMinute = int(30, 59);
+        checkOutHour = 20;
+        checkOutMinute = int(0, 30);
+      } else if (scenario < 18) {
+        status = "MISSING_CHECKOUT";
+      }
+
+      const checkIn = dateAt(2026, 8, day, checkInHour, checkInMinute);
+      let checkOut = null;
+
+      if (status === "PRESENT" || status === "LATE" || status === "OVERTIME") {
+        checkOut = dateAt(2026, 8, day, checkOutHour, checkOutMinute);
+      }
+
+      let workedHours = null;
+      if (checkOut) {
+        workedHours = Math.max(0, (checkOut - checkIn) / 3600000 - 1);
+      }
+
+      await prisma.attendance.create({
+        data: {
+          employeeId: employee.id,
+          checkIn,
+          checkOut,
+          workedHours,
+          status
+        }
+      });
+    }
+  }
+
+  console.log(
+    `   Wave 2 complete: +${wave2Employees.length} employees, ` +
+      `+${wave2Contracts.length} contracts, leave allocations/requests, ` +
+      "and attendance history. New active contracts will automatically " +
+      "get payslips in the payrun loop below (it re-queries active " +
+      "contracts fresh from the DB)."
+  );
 
   // ---------------------------------------------------------------
   // 14. Historical Payruns
